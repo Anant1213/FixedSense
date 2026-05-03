@@ -1,0 +1,36 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python environments
+venv/
+.venv/
+env/
+
+# Python caches and test artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Local IDE and OS files
+.DS_Store
+.vscode/
+.idea/
+.claude/
+
+# Generated interview-prep material - keep local only
+FIXEDSENSE_INTERVIEW_GUIDE.md
+FIXEDSENSE_INTERVIEW_GUIDE.pdf
+FIXEDSENSE_INTERVIEW_GUIDE.html
+

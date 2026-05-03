@@ -1,0 +1,77 @@
+scenarios:
+  historical:
+    - name: "2008 Global Financial Crisis"
+      id: "gfc_2008"
+      start_date: "2008-09-01"
+      end_date: "2008-11-30"
+      description: "Lehman collapse, credit freeze, flight to quality"
+      data_file: "crisis_gfc_2008.csv"
+
+    - name: "COVID March 2020"
+      id: "covid_2020"
+      start_date: "2020-03-01"
+      end_date: "2020-03-31"
+      description: "Pandemic panic, liquidity crisis, everything sold"
+      data_file: "crisis_covid_2020.csv"
+
+    - name: "2022 Rate Hike Cycle"
+      id: "rate_hike_2022"
+      start_date: "2022-01-01"
+      end_date: "2022-12-31"
+      description: "Aggressive Fed/RBI tightening, bond massacre"
+      data_file: "crisis_rates_2022.csv"
+
+  hypothetical:
+    - name: "Parallel +200bps"
+      id: "parallel_up_200"
+      shocks:
+        yield_curve_parallel_bps: 200
+        credit_spread_bps: 0
+      description: "Entire yield curve shifts up 200bps"
+      severity: "high"
+
+    - name: "Parallel -100bps"
+      id: "parallel_down_100"
+      shocks:
+        yield_curve_parallel_bps: -100
+        credit_spread_bps: 0
+      description: "Rate cut scenario — curve drops 100bps"
+      severity: "medium"
+
+    - name: "Curve Steepener"
+      id: "steepener"
+      shocks:
+        short_end_bps: 150  # 2Y and below
+        long_end_bps: -50   # 10Y and above
+        credit_spread_bps: 50
+      description: "Short rates spike, long rates fall, spreads widen"
+      severity: "high"
+
+    - name: "Curve Flattener"
+      id: "flattener"
+      shocks:
+        short_end_bps: -50   # 2Y and below
+        long_end_bps: 150    # 10Y and above
+        credit_spread_bps: 0
+      description: "Long rates rise more than short rates"
+      severity: "medium"
+
+    - name: "Credit Spread Blowout"
+      id: "spread_blowout"
+      shocks:
+        yield_curve_parallel_bps: 0
+        credit_spread_bps_by_rating:
+          AAA: 100
+          AA: 200
+          A: 350
+          BBB: 500
+      description: "Pure credit event — spreads explode, rates unchanged"
+      severity: "high"
+
+    - name: "Stagflation"
+      id: "stagflation"
+      shocks:
+        yield_curve_parallel_bps: 300
+        credit_spread_bps: 200
+      description: "Rates spike AND spreads widen — worst case"
+      severity: "extreme"

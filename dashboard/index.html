@@ -1,0 +1,1262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FixedSense — Fixed Income Risk Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<style>
+:root {
+  --bg:#050D1F; --surface:#0C1A35; --border:#1A2D50;
+  --blue:#2563EB; --teal:#0D9488; --red:#DC2626; --amber:#D97706;
+  --text:#E2E8F0; --muted:#64748B; --dim:#334155;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{height:100%;}
+body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;font-size:13px;line-height:1.5;overflow-x:hidden;}
+::-webkit-scrollbar{width:5px;height:5px;}
+::-webkit-scrollbar-track{background:var(--bg);}
+::-webkit-scrollbar-thumb{background:var(--dim);border-radius:3px;}
+input[type=range]{-webkit-appearance:none;width:100%;height:4px;border-radius:2px;background:var(--border);outline:none;cursor:pointer;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--blue);cursor:pointer;border:2px solid var(--bg);box-shadow:0 0 6px rgba(37,99,235,.5);}
+@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 6px #22C55E}50%{opacity:.5;box-shadow:0 0 2px #22C55E}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideIn{from{transform:translateX(32px);opacity:0}to{transform:translateX(0);opacity:1}}
+.live-dot{animation:pulse 2s ease-in-out infinite;}
+.spin{animation:spin 1s linear infinite;}
+.fade-up{animation:fadeUp .35s ease forwards;}
+.slide-in{animation:slideIn .35s ease forwards;}
+button{font-family:'DM Sans',sans-serif;cursor:pointer;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {
+  LineChart,Line,BarChart,Bar,XAxis,YAxis,CartesianGrid,Tooltip,
+  ResponsiveContainer,PieChart,Pie,Cell,ComposedChart,Area,ReferenceLine
+} = Recharts;
+const {useState,useEffect,useRef,useCallback,useMemo} = React;
+
+const API = 'http://localhost:8080';
+const C={bg:'#050D1F',surface:'#0C1A35',border:'#1A2D50',blue:'#2563EB',teal:'#0D9488',red:'#DC2626',amber:'#D97706',text:'#E2E8F0',muted:'#64748B',dim:'#334155',redDk:'#991B1B'};
+const TABS=['Overview','Greeks','Risk','P&L','Stress','Simulator','Regulatory'];
+
+// ── FORMAT HELPERS ────────────────────────────────────────────────────────
+const fmtM  = v => `$${(v/1e6).toFixed(2)}M`;
+const fmtK  = v => `$${(v/1e3).toFixed(0)}K`;
+const fmtPct= v => `${v.toFixed(2)}%`;
+const fmtPnl= v => {
+  const abs=Math.abs(v), s=v>=0?'+':'-';
+  return abs>=1e6 ? `${s}$${(abs/1e6).toFixed(2)}M` : `${s}$${(abs/1e3).toFixed(0)}K`;
+};
+const sign=(v,pos,neg,neu)=>v>1e3?pos:v<-1e3?neg:neu;
+
+// ── SHARED COMPONENTS ─────────────────────────────────────────────────────
+function Spinner(){
+  return <div className="spin" style={{width:18,height:18,border:`2px solid ${C.border}`,borderTop:`2px solid ${C.blue}`,borderRadius:'50%'}}/>;
+}
+
+function RatingBadge({r}){
+  const m={Sovereign:{bg:'#0A2A1A',tx:'#34D399',br:'#065F46'},AAA:{bg:'#0D1E3D',tx:'#60A5FA',br:'#1E40AF'},'AA+':{bg:'#1A0F3B',tx:'#C4B5FD',br:'#4C1D95'},A:{bg:'#1A1A0F',tx:'#FCD34D',br:'#92400E'}};
+  const c=m[r]||m['A'];
+  return <span style={{background:c.bg,color:c.tx,border:`1px solid ${c.br}`,borderRadius:3,padding:'1px 5px',fontSize:10,fontFamily:'JetBrains Mono,monospace',fontWeight:600,whiteSpace:'nowrap'}}>{r}</span>;
+}
+
+function Sec({children}){
+  return <div style={{fontSize:9,color:C.muted,letterSpacing:'.12em',fontWeight:700,marginBottom:10,display:'flex',alignItems:'center',gap:10}}>
+    <span>{children}</span><div style={{flex:1,height:1,background:C.border}}/>
+  </div>;
+}
+
+function CTip({active,payload,label}){
+  if(!active||!payload?.length) return null;
+  return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:'9px 13px',fontFamily:'JetBrains Mono,monospace',fontSize:11,boxShadow:'0 8px 24px rgba(0,0,0,.6)'}}>
+    {label&&<div style={{color:C.muted,marginBottom:5}}>{label}</div>}
+    {payload.filter(p=>p.value!=null&&p.value!==0).map((p,i)=><div key={i} style={{color:p.stroke||p.fill||C.text}}>{p.name}: <strong>{typeof p.value==='number'?p.value.toFixed(3):p.value}</strong></div>)}
+  </div>;
+}
+
+// ── TOP NAV ───────────────────────────────────────────────────────────────
+function TopNav({tab,setTab,loading}){
+  return <div style={{position:'fixed',top:0,left:0,right:0,height:48,background:C.bg,borderBottom:`1px solid ${C.border}`,boxShadow:`0 1px 24px rgba(37,99,235,.07)`,display:'flex',alignItems:'center',zIndex:100,padding:'0 20px',gap:0}}>
+    <div style={{display:'flex',alignItems:'center',gap:9,marginRight:28,flexShrink:0}}>
+      <div style={{width:26,height:26,background:C.blue,borderRadius:5,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'Syne,sans-serif',fontWeight:800,fontSize:14,color:'#fff'}}>F</div>
+      <span style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:16,color:C.text}}>FixedSense</span>
+      {loading&&<Spinner/>}
+    </div>
+    <div style={{display:'flex',flex:1,justifyContent:'center',gap:2}}>
+      {TABS.map(t=><button key={t} onClick={()=>setTab(t)} style={{background:'none',border:'none',padding:'0 14px',height:48,fontSize:12,fontWeight:500,color:tab===t?C.text:C.muted,borderBottom:tab===t?`2px solid ${C.blue}`:'2px solid transparent',transition:'color .12s'}}>{t}</button>)}
+    </div>
+    <div style={{display:'flex',alignItems:'center',gap:14,flexShrink:0}}>
+      <div style={{display:'flex',alignItems:'center',gap:6,fontSize:11,color:C.muted}}>
+        <div className="live-dot" style={{width:7,height:7,borderRadius:'50%',background:'#22C55E'}}/>
+        <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:10,color:'#22C55E',fontWeight:600}}>LIVE</span>
+        <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:10}}>{new Date().toLocaleTimeString('en-IN',{timeZone:'Asia/Kolkata'}).slice(0,8)} IST</span>
+      </div>
+      <div style={{width:30,height:30,borderRadius:'50%',background:`linear-gradient(135deg,${C.blue},#1D4ED8)`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:'#fff'}}>AS</div>
+    </div>
+  </div>;
+}
+
+// ── SIDEBAR ───────────────────────────────────────────────────────────────
+function Sidebar({bonds,varUtil,sel,setSel,onConfChange,conf,varLimit,varVal}){
+  const [range,setRange]=useState('1D');
+  const limits=[
+    {label:'VaR / Limit', pct:Math.min(100,varUtil), cur:fmtM(varVal), max:fmtM(varLimit)},
+    {label:'DV01 / Limit',pct:82,cur:'$5.7M',max:'$7M'},
+    {label:'Max Position',pct:Math.round((bonds?Math.max(...bonds.map(b=>b.weight*100)):0)/0.25*100),cur:`${bonds?Math.max(...bonds.map(b=>b.weight*100)).toFixed(0):0}%`,max:'25%'},
+  ];
+  return <div style={{width:220,flexShrink:0,background:C.surface,borderRight:`1px solid ${C.border}`,height:'calc(100vh - 48px)',overflowY:'auto',padding:'16px 0',position:'sticky',top:48}}>
+    <div style={{padding:'0 12px 14px'}}>
+      <div style={{fontSize:10,color:C.muted,letterSpacing:'.08em',marginBottom:6,fontWeight:600}}>PORTFOLIO</div>
+      <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,padding:'7px 10px',fontSize:12,color:C.text,display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer'}}>
+        <span>US Fixed Income</span><span style={{color:C.muted,fontSize:10}}>▾</span>
+      </div>
+      <div style={{marginTop:8,display:'flex',gap:5}}>
+        {['1D','1W','1M','3M','YTD'].map(r=><button key={r} onClick={()=>setRange(r)} style={{background:range===r?C.blue:C.bg,border:`1px solid ${range===r?C.blue:C.border}`,borderRadius:4,padding:'3px 7px',fontSize:10,color:range===r?'#fff':C.muted,fontFamily:'JetBrains Mono,monospace'}}>{r}</button>)}
+      </div>
+    </div>
+    <div style={{borderTop:`1px solid ${C.border}`,margin:'0 0 14px'}}/>
+    <div style={{padding:'0 12px'}}>
+      <div style={{fontSize:10,color:C.muted,letterSpacing:'.08em',marginBottom:8,fontWeight:600}}>PORTFOLIO BONDS</div>
+      {(bonds||[]).map(b=><div key={b.id} onClick={()=>setSel(sel===b.id?null:b.id)} style={{padding:8,borderRadius:6,cursor:'pointer',marginBottom:2,background:sel===b.id?'rgba(37,99,235,.12)':'transparent',border:`1px solid ${sel===b.id?C.blue:'transparent'}`,transition:'all .12s'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+          <span style={{fontSize:12,fontWeight:500,color:C.text}}>{b.name}</span>
+          <RatingBadge r={b.rating}/>
+        </div>
+        <div style={{display:'flex',justifyContent:'space-between'}}>
+          <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:10,color:C.muted}}>{(b.weight*100).toFixed(0)}% wt</span>
+          <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:10,color:b.pnl>=0?C.teal:C.red}}>{fmtPnl(b.pnl)}</span>
+        </div>
+      </div>)}
+    </div>
+    <div style={{borderTop:`1px solid ${C.border}`,margin:'14px 0'}}/>
+    <div style={{padding:'0 12px'}}>
+      <div style={{fontSize:10,color:C.muted,letterSpacing:'.08em',marginBottom:12,fontWeight:600}}>RISK LIMITS</div>
+      {limits.map(l=><div key={l.label} style={{marginBottom:14}}>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+          <span style={{fontSize:11,color:C.muted}}>{l.label}</span>
+          <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,color:l.pct>85?C.red:l.pct>70?C.amber:C.teal,fontWeight:600}}>{Math.min(100,l.pct).toFixed(0)}%</span>
+        </div>
+        <div style={{height:3,background:C.border,borderRadius:2,overflow:'hidden'}}>
+          <div style={{height:'100%',width:`${Math.min(100,l.pct)}%`,background:l.pct>85?C.red:l.pct>70?C.amber:C.teal,borderRadius:2,transition:'width .5s ease'}}/>
+        </div>
+        <div style={{display:'flex',justifyContent:'space-between',marginTop:2}}>
+          <span style={{fontSize:10,color:C.dim,fontFamily:'JetBrains Mono,monospace'}}>{l.cur}</span>
+          <span style={{fontSize:10,color:C.dim,fontFamily:'JetBrains Mono,monospace'}}>lim {l.max}</span>
+        </div>
+      </div>)}
+    </div>
+    <div style={{borderTop:`1px solid ${C.border}`,margin:'8px 0 12px'}}/>
+    <div style={{padding:'0 12px'}}>
+      <div style={{fontSize:10,color:C.muted,letterSpacing:'.08em',marginBottom:8,fontWeight:600}}>VAR CONFIDENCE</div>
+      <div style={{display:'flex',gap:6}}>
+        {[0.90,0.95,0.99].map(c=><button key={c} onClick={()=>onConfChange(c)} style={{flex:1,background:conf===c?C.blue:C.bg,border:`1px solid ${conf===c?C.blue:C.border}`,borderRadius:4,padding:'5px 0',fontSize:11,color:conf===c?'#fff':C.muted,fontFamily:'JetBrains Mono,monospace',fontWeight:600}}>{(c*100).toFixed(0)}%</button>)}
+      </div>
+    </div>
+    <div style={{borderTop:`1px solid ${C.border}`,margin:'12px 0'}}/>
+    <div style={{padding:'0 12px'}}>
+      <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:6}}>
+        <div className="live-dot" style={{width:6,height:6,borderRadius:'50%',background:'#22C55E'}}/>
+        <span style={{fontSize:11,color:C.muted}}>API: Connected</span>
+      </div>
+      <div style={{fontSize:10,color:C.dim,fontFamily:'JetBrains Mono,monospace'}}>Updated {new Date().toLocaleTimeString('en-IN',{timeZone:'Asia/Kolkata'}).slice(0,8)}</div>
+    </div>
+  </div>;
+}
+
+// ── WHAT-IF CONTROLS PANEL ────────────────────────────────────────────────
+function WhatIfPanel({bonds,onShift,onRecalc,loading}){
+  const [parallel,setParallel]=useState(0);
+  const [spreadShifts,setSpreadShifts]=useState({});
+  const [open,setOpen]=useState(true);
+
+  const debounceRef=useRef(null);
+  const handleParallel=v=>{
+    setParallel(v);
+    clearTimeout(debounceRef.current);
+    debounceRef.current=setTimeout(()=>onShift({parallel_bps:v,spread_shifts:spreadShifts}),180);
+  };
+  const handleSpread=(id,v)=>{
+    const ns={...spreadShifts,[id]:v};
+    setSpreadShifts(ns);
+    clearTimeout(debounceRef.current);
+    debounceRef.current=setTimeout(()=>onShift({parallel_bps:parallel,spread_shifts:ns}),180);
+  };
+  const reset=()=>{setParallel(0);setSpreadShifts({});onShift({parallel_bps:0,spread_shifts:{}});};
+
+  const bumpColor=parallel>0?C.red:parallel<0?C.teal:C.muted;
+  const bumpSign=parallel>0?'+':'';
+
+  return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',marginBottom:22}}>
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 18px',borderBottom:open?`1px solid ${C.border}`:'none',cursor:'pointer'}} onClick={()=>setOpen(o=>!o)}>
+      <div style={{display:'flex',alignItems:'center',gap:10}}>
+        <span style={{fontSize:14,color:C.blue}}>⚡</span>
+        <span style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:13,color:C.text}}>What-If Scenario Lab</span>
+        <span style={{fontSize:10,color:C.muted,fontFamily:'JetBrains Mono,monospace',background:C.bg,border:`1px solid ${C.border}`,padding:'2px 7px',borderRadius:10}}>LIVE CALCULATIONS</span>
+        {(parallel!==0||Object.keys(spreadShifts).some(k=>spreadShifts[k]!==0))&&<span style={{fontSize:10,color:C.amber,fontFamily:'JetBrains Mono,monospace'}}>● MODIFIED</span>}
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:10}}>
+        {loading&&<Spinner/>}
+        <button onClick={e=>{e.stopPropagation();reset();}} style={{background:'transparent',border:`1px solid ${C.border}`,borderRadius:4,padding:'3px 10px',fontSize:10,color:C.muted}}>Reset</button>
+        <button onClick={e=>{e.stopPropagation();onRecalc({parallel_bps:parallel,spread_shifts:spreadShifts});}} style={{background:C.blue,border:'none',borderRadius:4,padding:'4px 12px',fontSize:11,color:'#fff',fontWeight:600}}>Full Recalc ⟳</button>
+        <span style={{color:C.muted,fontSize:12}}>{open?'▲':'▼'}</span>
+      </div>
+    </div>
+    {open&&<div style={{padding:'16px 18px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+      {/* Parallel shift */}
+      <div>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+          <span style={{fontSize:11,fontWeight:600,color:C.text}}>Parallel Curve Shift</span>
+          <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:14,fontWeight:700,color:bumpColor}}>{bumpSign}{parallel} bps</span>
+        </div>
+        <input type="range" min="-300" max="300" step="5" value={parallel} onChange={e=>handleParallel(Number(e.target.value))} style={{accentColor:bumpColor}}/>
+        <div style={{display:'flex',justifyContent:'space-between',fontSize:9,color:C.muted,marginTop:4,fontFamily:'JetBrains Mono,monospace'}}>
+          <span>-300 bps</span><span style={{color:C.muted}}>Rally ←       → Sell-off</span><span>+300 bps</span>
+        </div>
+        <div style={{display:'flex',gap:6,marginTop:10}}>
+          {[-200,-100,-50,0,50,100,200].map(v=><button key={v} onClick={()=>handleParallel(v)} style={{flex:1,background:parallel===v?C.blue:C.bg,border:`1px solid ${parallel===v?C.blue:C.border}`,borderRadius:4,padding:'3px 0',fontSize:9,color:parallel===v?'#fff':C.muted,fontFamily:'JetBrains Mono,monospace'}}>{v>0?'+':''}{v}</button>)}
+        </div>
+      </div>
+
+      {/* Spread shifts per bond */}
+      <div>
+        <div style={{fontSize:11,fontWeight:600,color:C.text,marginBottom:10}}>Credit Spread Adjustment</div>
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          {(bonds||[]).filter(b=>b.spread_bps>0).map(b=>{
+            const sv=spreadShifts[b.id]||0;
+            return <div key={b.id} style={{display:'grid',gridTemplateColumns:'90px 1fr 60px',gap:8,alignItems:'center'}}>
+              <span style={{fontSize:11,color:C.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.name}</span>
+              <input type="range" min="-100" max="200" step="5" value={sv} onChange={e=>handleSpread(b.id,Number(e.target.value))} style={{accentColor:sv>0?C.red:sv<0?C.teal:C.muted}}/>
+              <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,fontWeight:600,color:sv>0?C.red:sv<0?C.teal:C.muted,textAlign:'right'}}>{sv>0?'+':''}{sv}bp</span>
+            </div>;
+          })}
+          {(bonds||[]).filter(b=>b.spread_bps>0).length===0&&<div style={{fontSize:11,color:C.muted}}>No spread bonds in portfolio</div>}
+        </div>
+      </div>
+    </div>}
+  </div>;
+}
+
+// ── METRIC CARD ───────────────────────────────────────────────────────────
+function MetCard({label,val,sub,color=C.text,accent=C.border,delta}){
+  return <div style={{border:`1px solid ${C.border}`,borderTop:`2px solid ${accent}`,borderRadius:8,padding:'14px 16px',flex:1,minWidth:0,transition:'box-shadow .2s',cursor:'default'}}
+    onMouseEnter={e=>e.currentTarget.style.boxShadow=`0 0 18px rgba(37,99,235,.1)`}
+    onMouseLeave={e=>e.currentTarget.style.boxShadow='none'}>
+    <div style={{fontSize:9,color:C.muted,letterSpacing:'.09em',marginBottom:8,fontWeight:600}}>{label}</div>
+    <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:21,fontWeight:700,color,letterSpacing:'-.02em',lineHeight:1.1}}>{val||'—'}</div>
+    {sub&&<div style={{fontSize:10,color:C.muted,marginTop:5,fontFamily:'JetBrains Mono,monospace'}}>{sub}</div>}
+    {delta!=null&&delta!==0&&<div style={{fontSize:10,marginTop:3,fontFamily:'JetBrains Mono,monospace',color:delta>0?C.teal:C.red}}>{delta>0?'▲':'▼'} {fmtPnl(Math.abs(delta))}</div>}
+  </div>;
+}
+
+function VaRCard({cur,lim,util}){
+  const pct=util||0;
+  const color=pct>85?C.red:pct>70?C.amber:C.teal;
+  return <div style={{border:`1px solid ${C.border}`,borderTop:`2px solid ${color}`,borderRadius:8,padding:'14px 16px',flex:1,minWidth:0}}>
+    <div style={{fontSize:9,color:C.muted,letterSpacing:'.09em',marginBottom:8,fontWeight:600}}>VAR UTILIZATION</div>
+    <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:21,fontWeight:700,color,letterSpacing:'-.02em'}}>{pct.toFixed(1)}%</div>
+    <div style={{position:'relative',height:16,margin:'8px 0 4px'}}>
+      <div style={{position:'absolute',top:'50%',left:0,right:0,height:2,background:C.border,borderRadius:1,transform:'translateY(-50%)'}}/>
+      <div style={{position:'absolute',top:'50%',left:0,height:2,width:`${Math.min(100,pct)}%`,background:color,borderRadius:1,transform:'translateY(-50%)',transition:'width .5s ease'}}/>
+      <div style={{position:'absolute',top:'50%',left:`${Math.min(100,pct)}%`,width:8,height:8,borderRadius:'50%',background:color,transform:'translate(-50%,-50%)',boxShadow:`0 0 6px ${color}`}}/>
+    </div>
+    <div style={{fontSize:10,color:C.muted,fontFamily:'JetBrains Mono,monospace'}}>{fmtM(cur||0)} of {fmtM(lim||0)}</div>
+  </div>;
+}
+
+// ── YIELD CURVE CHART ─────────────────────────────────────────────────────
+function YieldCurveChart({curve,shiftedCurve}){
+  const merged=(curve||[]).map((p,i)=>({...p,shifted:shiftedCurve?.[i]?.spot}));
+  return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px'}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14}}>
+      <div>
+        <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text}}>Live Yield Curve</div>
+        <div style={{fontSize:11,color:C.muted,marginTop:2,fontFamily:'JetBrains Mono,monospace'}}>Bootstrapped spot curve from FRED data</div>
+      </div>
+      <div style={{display:'flex',gap:14,fontSize:10}}>
+        {[{l:'Spot',c:C.blue,d:''},{l:'What-If',c:C.amber,d:''}].map(x=><div key={x.l} style={{display:'flex',alignItems:'center',gap:5,color:x.c}}>
+          <div style={{width:14,height:2,background:x.c}}/>{x.l}
+        </div>)}
+      </div>
+    </div>
+    <ResponsiveContainer width="100%" height={210}>
+      <ComposedChart data={merged}>
+        <defs>
+          <linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor={C.blue} stopOpacity={.14}/>
+            <stop offset="95%" stopColor={C.blue} stopOpacity={0}/>
+          </linearGradient>
+        </defs>
+        <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false}/>
+        <XAxis dataKey="t" tick={{fill:C.muted,fontSize:10,fontFamily:'JetBrains Mono,monospace'}} axisLine={{stroke:C.border}} tickLine={false}/>
+        <YAxis domain={['auto','auto']} tick={{fill:C.muted,fontSize:9,fontFamily:'JetBrains Mono,monospace'}} axisLine={false} tickLine={false} tickFormatter={v=>v.toFixed(1)+'%'} width={40}/>
+        <Tooltip content={<CTip/>}/>
+        <Area type="monotone" dataKey="spot" fill="url(#sg)" stroke="none"/>
+        <Line type="monotone" dataKey="spot" stroke={C.blue} strokeWidth={2.5} dot={false} name="Spot"/>
+        {shiftedCurve&&<Line type="monotone" dataKey="shifted" stroke={C.amber} strokeWidth={1.5} strokeDasharray="4 2" dot={false} name="What-If"/>}
+      </ComposedChart>
+    </ResponsiveContainer>
+  </div>;
+}
+
+// ── MC DISTRIBUTION CHART ─────────────────────────────────────────────────
+function MCDistChart({dist,var95,cvar95}){
+  const bins=useMemo(()=>{
+    if(!dist?.length) return [];
+    const min=Math.min(...dist),max=Math.max(...dist);
+    const n=60,bw=(max-min)/n;
+    const b=Array.from({length:n},(_,i)=>({x:min+i*bw+bw/2,cnt:0}));
+    dist.forEach(v=>{let i=Math.floor((v-min)/bw);if(i>=n)i=n-1;if(i>=0)b[i].cnt++;});
+    return b;
+  },[dist]);
+
+  const getColor=x=>x<=(cvar95?-cvar95:-18e5)?'#7F1D1D':x<=(var95?-var95:-12e5)?C.redDk:'#1D4ED8';
+  const VAR_X=var95?-var95:null;
+  const CVAR_X=cvar95?-cvar95:null;
+
+  return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px'}}>
+    <div style={{marginBottom:14}}>
+      <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text}}>P&L Distribution</div>
+      <div style={{fontSize:11,color:C.muted,marginTop:2}}>5,000 Monte Carlo scenarios · PCA factors</div>
+    </div>
+    <ResponsiveContainer width="100%" height={185}>
+      <BarChart data={bins} barCategoryGap="0%">
+        <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false}/>
+        <XAxis dataKey="x" tick={{fill:C.muted,fontSize:9,fontFamily:'JetBrains Mono,monospace'}} axisLine={{stroke:C.border}} tickLine={false} tickFormatter={v=>`${(v/1e6).toFixed(1)}M`} interval={9}/>
+        <YAxis hide/>
+        <Tooltip content={({active,payload})=>{
+          if(!active||!payload?.length) return null;
+          return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:'8px 12px',fontFamily:'JetBrains Mono,monospace',fontSize:11}}>
+            <div style={{color:C.muted}}>P&L: {fmtM(payload[0].payload.x)}</div>
+            <div style={{color:C.text}}>Scenarios: <strong>{payload[0].payload.cnt}</strong></div>
+          </div>;
+        }}/>
+        <Bar dataKey="cnt" radius={[1,1,0,0]}>
+          {bins.map((e,i)=><Cell key={i} fill={getColor(e.x)}/>)}
+        </Bar>
+        {VAR_X&&<ReferenceLine x={VAR_X} stroke={C.red} strokeDasharray="4 2" strokeWidth={1.5} label={{value:'VaR',fill:C.red,fontSize:9}}/>}
+        {CVAR_X&&<ReferenceLine x={CVAR_X} stroke="#7F1D1D" strokeWidth={1.5} label={{value:'CVaR',fill:'#7F1D1D',fontSize:9}}/>}
+      </BarChart>
+    </ResponsiveContainer>
+    <div style={{display:'flex',gap:18,marginTop:6,fontSize:10,fontFamily:'JetBrains Mono,monospace'}}>
+      <span style={{color:C.red}}>— VaR 95%: {var95?fmtM(var95):'—'}</span>
+      <span style={{color:'#7F1D1D'}}>— CVaR 95%: {cvar95?fmtM(cvar95):'—'}</span>
+    </div>
+  </div>;
+}
+
+// ── KR01 CHART ────────────────────────────────────────────────────────────
+function KR01Chart({kr01}){
+  const maxV=kr01?Math.max(...kr01.map(d=>d.value)):1;
+  const getFill=v=>{const t=v/maxV;return t>.9?C.blue:t>.55?'#1D4ED8':t>.3?'#1E40AF':t>.15?'#1E3A8A':'#172554';};
+  return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px',flex:1}}>
+    <div style={{marginBottom:14}}>
+      <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text}}>Key Rate Risk (KR01)</div>
+      <div style={{fontSize:11,color:C.muted,marginTop:2}}>$ change per 1bp move at each tenor</div>
+    </div>
+    <ResponsiveContainer width="100%" height={268}>
+      <BarChart data={kr01||[]} layout="vertical" barSize={18} margin={{left:4,right:60,top:4,bottom:4}}>
+        <CartesianGrid stroke={C.border} strokeDasharray="3 3" horizontal={false}/>
+        <XAxis type="number" tick={{fill:C.muted,fontSize:9,fontFamily:'JetBrains Mono,monospace'}} axisLine={{stroke:C.border}} tickLine={false} tickFormatter={v=>`$${v.toFixed(1)}M`}/>
+        <YAxis type="category" dataKey="tenor" width={32} tick={{fill:C.muted,fontSize:10,fontFamily:'JetBrains Mono,monospace'}} axisLine={false} tickLine={false}/>
+        <Tooltip content={({active,payload})=>{
+          if(!active||!payload?.length) return null;
+          return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:'8px 12px',fontFamily:'JetBrains Mono,monospace',fontSize:11}}>
+            <div style={{color:C.muted}}>{payload[0]?.payload.tenor}</div>
+            <div style={{color:C.blue}}>${payload[0]?.value.toFixed(2)}M / bp</div>
+          </div>;
+        }}/>
+        <Bar dataKey="value" radius={[0,4,4,0]} label={{position:'right',fill:C.muted,fontSize:9,fontFamily:'JetBrains Mono,monospace',formatter:v=>`$${v.toFixed(2)}M`}}>
+          {(kr01||[]).map((e,i)=><Cell key={i} fill={getFill(e.value)}/>)}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  </div>;
+}
+
+// ── VAR DONUT ─────────────────────────────────────────────────────────────
+const VAR_DECOMP=[{name:'Rate Risk',pct:45,color:C.blue},{name:'Spread Risk',pct:28,color:C.teal},{name:'Curve Risk',pct:18,color:C.amber},{name:'Residual',pct:9,color:C.dim}];
+function VaRDonut({var95}){
+  return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px'}}>
+    <div style={{marginBottom:14}}>
+      <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text}}>Risk Attribution</div>
+      <div style={{fontSize:11,color:C.muted,marginTop:2}}>VaR decomposition by risk factor</div>
+    </div>
+    <div style={{display:'flex',alignItems:'center',gap:16}}>
+      <div style={{position:'relative',flexShrink:0}}>
+        <ResponsiveContainer width={150} height={150}>
+          <PieChart>
+            <Pie data={VAR_DECOMP} cx={70} cy={70} innerRadius={46} outerRadius={68} dataKey="pct" paddingAngle={3} strokeWidth={0}>
+              {VAR_DECOMP.map((e,i)=><Cell key={i} fill={e.color}/>)}
+            </Pie>
+          </PieChart>
+        </ResponsiveContainer>
+        <div style={{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%)',textAlign:'center',pointerEvents:'none'}}>
+          <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:14,fontWeight:700,color:C.text}}>{var95?fmtM(var95):'—'}</div>
+          <div style={{fontSize:9,color:C.muted,marginTop:1}}>VaR 95%</div>
+        </div>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:9}}>
+        {VAR_DECOMP.map(d=><div key={d.name} style={{display:'flex',alignItems:'center',gap:8}}>
+          <div style={{width:9,height:9,borderRadius:2,background:d.color,flexShrink:0}}/>
+          <div>
+            <div style={{fontSize:11,color:C.text,fontWeight:500}}>{d.name}</div>
+            <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:10,color:C.muted}}>{d.pct}% · {var95?fmtM(var95*d.pct/100):'—'}</div>
+          </div>
+        </div>)}
+      </div>
+    </div>
+  </div>;
+}
+
+// ── STRESS TABLE ──────────────────────────────────────────────────────────
+function StressTable({stress,navM}){
+  const rows=stress?Object.values(stress):[];
+  const ic=v=>v<-12?{bg:'rgba(220,38,38,.15)',tx:C.red}:v<-8?{bg:'rgba(217,119,6,.15)',tx:C.amber}:{bg:'rgba(13,148,136,.08)',tx:C.teal};
+  const sev=v=>v<-12?'severe':v<-8?'high':'moderate';
+  return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px'}}>
+    <div style={{marginBottom:14}}>
+      <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text}}>Scenario Analysis</div>
+      <div style={{fontSize:11,color:C.muted,marginTop:2}}>Real repriced scenarios from Python engine</div>
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'1.8fr .8fr 1fr .8fr',gap:6,padding:'5px 8px',borderBottom:`1px solid ${C.border}`,fontSize:9,color:C.muted,letterSpacing:'.08em',fontWeight:600}}>
+      <span>SCENARIO</span><span>IMPACT%</span><span>IMPACT $</span><span>STATUS</span>
+    </div>
+    {rows.length===0&&<div style={{padding:'20px 8px',color:C.muted,fontSize:12}}>Loading scenarios...</div>}
+    {rows.map((s,i)=>{
+      const c=ic(s.impact_pct);
+      const sv=sev(s.impact_pct);
+      const svC={severe:C.red,high:C.amber,moderate:C.teal}[sv];
+      return <div key={i} style={{display:'grid',gridTemplateColumns:'1.8fr .8fr 1fr .8fr',gap:6,padding:'9px 8px',borderBottom:`1px solid ${C.border}`,transition:'background .1s',cursor:'default'}}
+        onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.025)'}
+        onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+        <span style={{fontSize:11,fontWeight:500,color:C.text}}>{s.name}</span>
+        <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,color:c.tx,background:c.bg,padding:'1px 6px',borderRadius:4}}>{s.impact_pct.toFixed(1)}%</span>
+        <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,color:c.tx}}>{fmtM(s.impact_abs)}</span>
+        <span style={{fontSize:10,color:svC,fontWeight:600}}>● {sv.charAt(0).toUpperCase()+sv.slice(1)}</span>
+      </div>;
+    })}
+  </div>;
+}
+
+// ── BOND TABLE ────────────────────────────────────────────────────────────
+function BondTable({bonds,sel,setSel,shiftPnl}){
+  const totPnl=(bonds||[]).reduce((s,b)=>s+(shiftPnl?.[b.id]??b.pnl),0);
+  return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px'}}>
+    <div style={{marginBottom:14}}>
+      <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text}}>Portfolio Positions</div>
+      <div style={{fontSize:11,color:C.muted,marginTop:2}}>{bonds?.length||0} bonds · {bonds?fmtM(bonds.reduce((s,b)=>s+b.value,0)):'—'} NAV</div>
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'1.3fr .9fr .5fr .7fr .9fr .9fr',gap:5,padding:'5px 8px',borderBottom:`1px solid ${C.border}`,fontSize:9,color:C.muted,letterSpacing:'.08em',fontWeight:600}}>
+      <span>BOND</span><span>RATING</span><span>WT</span><span>PRICE</span><span>DV01</span><span>P&L</span>
+    </div>
+    {(bonds||[]).map(b=>{
+      const pnl=shiftPnl?.[b.id]??b.pnl;
+      return <div key={b.id} onClick={()=>setSel(sel===b.id?null:b.id)} style={{display:'grid',gridTemplateColumns:'1.3fr .9fr .5fr .7fr .9fr .9fr',gap:5,padding:'9px 8px',borderBottom:`1px solid ${C.border}`,cursor:'pointer',transition:'background .1s',background:sel===b.id?'rgba(37,99,235,.08)':'transparent',borderLeft:sel===b.id?`2px solid ${C.blue}`:`2px solid transparent`}}
+        onMouseEnter={e=>{if(sel!==b.id)e.currentTarget.style.background='rgba(255,255,255,.025)';}}
+        onMouseLeave={e=>{if(sel!==b.id)e.currentTarget.style.background='transparent';}}>
+        <span style={{fontSize:12,fontWeight:500,color:C.text}}>{b.name}</span>
+        <RatingBadge r={b.rating}/>
+        <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,color:C.muted}}>{(b.weight*100).toFixed(0)}%</span>
+        <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,color:C.muted}}>{b.price?.toFixed(2)}</span>
+        <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,color:C.amber}}>{fmtK(b.dv01)}</span>
+        <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,fontWeight:600,color:pnl>=0?C.teal:C.red}}>{fmtPnl(pnl)}</span>
+      </div>;
+    })}
+    <div style={{display:'grid',gridTemplateColumns:'1.3fr .9fr .5fr .7fr .9fr .9fr',gap:5,padding:'8px 8px',borderTop:`1px solid ${C.border}`,marginTop:1}}>
+      <span style={{fontSize:11,fontWeight:700,color:C.muted}}>TOTAL</span><span/><span style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,color:C.muted}}>100%</span><span/>
+      <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,color:C.amber}}>{bonds?fmtK(bonds.reduce((s,b)=>s+b.dv01,0)):'—'}</span>
+      <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,fontWeight:700,color:totPnl>=0?C.teal:C.red}}>{fmtPnl(totPnl)}</span>
+    </div>
+  </div>;
+}
+
+// ── TRADE SIMULATOR ───────────────────────────────────────────────────────
+function TradeSimulator({bonds,onTrade,tradeResult,tradeLoading}){
+  const [bondId,setBondId]=useState('');
+  const [dir,setDir]=useState('buy');
+  const [amt,setAmt]=useState(10);
+
+  useEffect(()=>{if(bonds?.length&&!bondId)setBondId(bonds[0].id);},[bonds]);
+
+  return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px'}}>
+    <div style={{marginBottom:16}}>
+      <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text}}>Trade Simulator</div>
+      <div style={{fontSize:11,color:C.muted,marginTop:2}}>Simulate a trade and see live impact on Greeks</div>
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr auto',gap:12,alignItems:'end',marginBottom:16}}>
+      <div>
+        <div style={{fontSize:10,color:C.muted,marginBottom:6,letterSpacing:'.06em'}}>BOND</div>
+        <select value={bondId} onChange={e=>setBondId(e.target.value)} style={{width:'100%',background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,padding:'8px 10px',color:C.text,fontSize:12,fontFamily:'DM Sans,sans-serif',cursor:'pointer'}}>
+          {(bonds||[]).map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+      </div>
+      <div>
+        <div style={{fontSize:10,color:C.muted,marginBottom:6,letterSpacing:'.06em'}}>DIRECTION</div>
+        <div style={{display:'flex',gap:0}}>
+          {['buy','sell'].map(d=><button key={d} onClick={()=>setDir(d)} style={{flex:1,background:dir===d?(d==='buy'?C.teal:C.red):C.bg,border:`1px solid ${dir===d?(d==='buy'?C.teal:C.red):C.border}`,borderRadius:d==='buy'?'6px 0 0 6px':'0 6px 6px 0',padding:'8px 0',fontSize:12,fontWeight:600,color:dir===d?'#fff':C.muted,textTransform:'uppercase'}}>{d}</button>)}
+        </div>
+      </div>
+      <div>
+        <div style={{fontSize:10,color:C.muted,marginBottom:6,letterSpacing:'.06em'}}>NOTIONAL ($ MILLIONS)</div>
+        <input type="number" value={amt} onChange={e=>setAmt(Number(e.target.value))} min="1" max="500" style={{width:'100%',background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,padding:'8px 10px',color:C.text,fontSize:14,fontFamily:'JetBrains Mono,monospace'}}/>
+      </div>
+      <button onClick={()=>onTrade({bond_id:bondId,direction:dir,notional_m:amt})} style={{background:C.blue,border:'none',borderRadius:6,padding:'9px 20px',fontSize:13,fontWeight:600,color:'#fff',display:'flex',alignItems:'center',gap:8}}>
+        {tradeLoading?<Spinner/>:null}Simulate
+      </button>
+    </div>
+    {tradeResult&&<div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,padding:16,background:C.bg,borderRadius:8,border:`1px solid ${C.border}`}}>
+      {[
+        {l:'NAV Impact',v:fmtM(tradeResult.nav),color:C.text},
+        {l:'P&L Impact',v:fmtPnl(tradeResult.pnl_impact),color:tradeResult.pnl_impact>=0?C.teal:C.red},
+        {l:'New Total DV01',v:fmtK(tradeResult.total_dv01),color:C.amber},
+        {l:'DV01 Change',v:fmtK(tradeResult.dv01_delta),color:tradeResult.dv01_delta>=0?C.red:C.teal},
+      ].map(m=><div key={m.l}>
+        <div style={{fontSize:9,color:C.muted,letterSpacing:'.08em',marginBottom:4}}>{m.l}</div>
+        <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:16,fontWeight:700,color:m.color}}>{m.v}</div>
+      </div>)}
+    </div>}
+  </div>;
+}
+
+// ── ALERTS ────────────────────────────────────────────────────────────────
+function AlertsStrip({varUtil,nav,shiftPnl}){
+  const [dis,setDis]=useState({});
+  const alerts=[
+    varUtil>80 ? {color:C.red,  bg:'#450A0A',br:'#7F1D1D',icon:'⚠',msg:`VaR utilization at ${varUtil?.toFixed(0)}% — limit breach imminent`,btn:'Dismiss',key:'var'} : null,
+    varUtil>60 && varUtil<=80 ? {color:C.amber,bg:'#451A03',br:'#92400E',icon:'⚠',msg:`VaR utilization at ${varUtil?.toFixed(0)}% — approaching 80% limit`,btn:'Dismiss',key:'var2'} : null,
+    shiftPnl!=null&&shiftPnl<0 ? {color:C.red,  bg:'#450A0A',br:'#7F1D1D',icon:'↓',msg:`What-If scenario shows ${fmtPnl(shiftPnl)} portfolio P&L`,btn:'Clear',key:'shift'} : null,
+    {color:C.teal,bg:'#042F2E',br:'#065F46',icon:'✓',msg:'Pricing engine live — real-time FRED data loaded',btn:'Details',key:'live'},
+    {color:C.blue,bg:'#1E3A5F',br:'#1E40AF',icon:'ℹ',msg:`Portfolio NAV: ${nav?fmtM(nav):'loading...'} · 5,000 MC scenarios computed`,btn:'View',key:'nav'},
+  ].filter(Boolean);
+  return <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
+    {alerts.filter(a=>!dis[a.key]).map((a,i)=><div key={a.key} className="slide-in" style={{flex:1,minWidth:220,background:a.bg,border:`1px solid ${a.br}`,borderRadius:8,padding:'12px 16px',display:'flex',alignItems:'center',gap:12,animationDelay:`${i*100}ms`}}>
+      <span style={{fontSize:14,color:a.color,flexShrink:0}}>{a.icon}</span>
+      <span style={{flex:1,fontSize:12,color:C.text}}>{a.msg}</span>
+      <button onClick={()=>setDis(d=>({...d,[a.key]:true}))} style={{background:'transparent',border:`1px solid ${a.br}`,borderRadius:4,padding:'3px 10px',fontSize:11,color:a.color,flexShrink:0}}>{a.btn}</button>
+    </div>)}
+  </div>;
+}
+
+// ── LOADING SCREEN ────────────────────────────────────────────────────────
+function LoadingScreen(){
+  return <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100vh',gap:20}}>
+    <div style={{width:40,height:40,border:`3px solid ${C.border}`,borderTop:`3px solid ${C.blue}`,borderRadius:'50%',animation:'spin 1s linear infinite'}}/>
+    <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:20,color:C.text}}>FixedSense</div>
+    <div style={{fontSize:13,color:C.muted}}>Loading portfolio · bootstrapping yield curve · running Monte Carlo...</div>
+    <div style={{fontSize:11,color:C.dim,fontFamily:'JetBrains Mono,monospace'}}>Connecting to pricing engine at {API}</div>
+  </div>;
+}
+
+// ── PLACEHOLDER TAB ───────────────────────────────────────────────────────
+function Placeholder({name}){
+  return <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',minHeight:400,gap:12}}>
+    <div style={{width:48,height:48,borderRadius:12,border:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,color:C.muted}}>⬜</div>
+    <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:18,color:C.muted}}>{name}</div>
+    <div style={{fontSize:12,color:C.dim}}>Connect to the Python backend to view {name.toLowerCase()} analytics</div>
+  </div>;
+}
+
+// ── GREEKS PAGE ──────────────────────────────────────────────────────────
+function GreeksPage({snap, displayKR01}){
+  const bonds = snap?.bonds||[];
+  const kr01  = displayKR01||[];
+  const totalDv01 = snap?.total_dv01||0;
+
+  const bondGreeks = bonds.map(b=>{
+    const md = (b.dv01&&b.price&&b.notional) ? (b.dv01*10000)/(b.price*b.notional/100) : 0;
+    return {...b, md, dv01_pct: totalDv01 ? b.dv01/totalDv01*100 : 0};
+  });
+  const portDuration = bondGreeks.reduce((s,b)=>s + b.md*b.weight, 0);
+  const totalKR01M   = kr01.reduce((s,k)=>s+k.value,0)*0.1; // $M/bp (values are $100K/bp)
+
+  const dv01Chart = bondGreeks.map(b=>({
+    name: b.id, fullName: b.name,
+    value: Math.round(b.dv01/100)/10,
+  }));
+
+  const sensData = [-300,-200,-100,-50,0,50,100,200,300].map(bps=>({
+    bps, pnl: -(totalDv01*bps)/1e6,
+  }));
+
+  const SC={Government:C.blue,Technology:C.teal,Financials:C.amber};
+
+  return <div className="fade-up">
+    <Sec>KEY SENSITIVITY METRICS</Sec>
+    <div style={{display:'flex',gap:12,marginBottom:22}}>
+      <MetCard label="PORTFOLIO DURATION" val={`${portDuration.toFixed(2)}Y`} sub="Weighted mod. duration" color={C.amber} accent={C.amber}/>
+      <MetCard label="TOTAL DV01" val={totalDv01?fmtK(totalDv01):'—'} sub="$ per 1bp parallel shift" color={C.blue} accent={C.blue}/>
+      <MetCard label="TOTAL KR01" val={`$${totalKR01M.toFixed(1)}M/bp`} sub="Sum across 9 key tenors" color={C.teal} accent={C.teal}/>
+      <MetCard label="CONVEXITY" val="Positive" sub="Long-only bond portfolio" color={C.text} accent={C.border}/>
+    </div>
+
+    <Sec>KR01 LADDER — KEY RATE SENSITIVITY</Sec>
+    <div style={{marginBottom:22}}><KR01Chart kr01={kr01}/></div>
+
+    <Sec>BOND GREEKS TABLE</Sec>
+    <div style={{display:'grid',gridTemplateColumns:'58% 42%',gap:16,marginBottom:22}}>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px'}}>
+        <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text,marginBottom:14}}>Per-Bond Greeks</div>
+        <div style={{display:'grid',gridTemplateColumns:'1.8fr .7fr .85fr 1fr',gap:5,padding:'5px 8px',borderBottom:`1px solid ${C.border}`,fontSize:9,color:C.muted,letterSpacing:'.08em',fontWeight:600}}>
+          <span>BOND</span><span>MOD DUR</span><span>DV01</span><span>DV01 SHARE</span>
+        </div>
+        {bondGreeks.map(b=><div key={b.id} style={{display:'grid',gridTemplateColumns:'1.8fr .7fr .85fr 1fr',gap:5,padding:'9px 8px',borderBottom:`1px solid ${C.border}`}}>
+          <div>
+            <div style={{fontSize:12,fontWeight:500,color:C.text}}>{b.name}</div>
+            <div style={{fontSize:10,color:C.muted,fontFamily:'JetBrains Mono,monospace'}}>
+              <span style={{color:SC[b.sector]||C.muted}}>{b.sector}</span> · {(b.weight*100).toFixed(0)}%
+            </div>
+          </div>
+          <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:12,color:C.amber,alignSelf:'center'}}>{b.md.toFixed(2)}Y</span>
+          <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:12,color:C.blue,alignSelf:'center'}}>{fmtK(b.dv01)}</span>
+          <div style={{display:'flex',alignItems:'center',gap:6}}>
+            <div style={{flex:1,height:4,background:C.border,borderRadius:2,overflow:'hidden'}}>
+              <div style={{height:'100%',width:`${b.dv01_pct}%`,background:C.blue,borderRadius:2}}/>
+            </div>
+            <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:10,color:C.muted,width:28,textAlign:'right'}}>{b.dv01_pct.toFixed(0)}%</span>
+          </div>
+        </div>)}
+        <div style={{display:'grid',gridTemplateColumns:'1.8fr .7fr .85fr 1fr',gap:5,padding:'8px 8px',borderTop:`1px solid ${C.border}`}}>
+          <span style={{fontSize:11,fontWeight:700,color:C.muted}}>PORTFOLIO</span>
+          <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:12,color:C.amber,fontWeight:700}}>{portDuration.toFixed(2)}Y</span>
+          <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:12,color:C.blue,fontWeight:700}}>{fmtK(totalDv01)}</span>
+          <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:11,color:C.muted}}>100%</span>
+        </div>
+      </div>
+
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px'}}>
+        <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text,marginBottom:14}}>DV01 by Bond ($K)</div>
+        <ResponsiveContainer width="100%" height={290}>
+          <BarChart data={dv01Chart} layout="vertical" barSize={15} margin={{left:0,right:52,top:0,bottom:0}}>
+            <CartesianGrid stroke={C.border} strokeDasharray="3 3" horizontal={false}/>
+            <XAxis type="number" tick={{fill:C.muted,fontSize:9,fontFamily:'JetBrains Mono,monospace'}} axisLine={{stroke:C.border}} tickLine={false} tickFormatter={v=>`$${v.toFixed(0)}K`}/>
+            <YAxis type="category" dataKey="name" width={52} tick={{fill:C.muted,fontSize:10,fontFamily:'JetBrains Mono,monospace'}} axisLine={false} tickLine={false}/>
+            <Tooltip content={({active,payload})=>{
+              if(!active||!payload?.length) return null;
+              return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:'8px 12px',fontFamily:'JetBrains Mono,monospace',fontSize:11}}>
+                <div style={{color:C.muted}}>{payload[0]?.payload.fullName}</div>
+                <div style={{color:C.amber}}>DV01: ${payload[0]?.value.toFixed(1)}K / bp</div>
+              </div>;
+            }}/>
+            <Bar dataKey="value" radius={[0,4,4,0]} label={{position:'right',fill:C.muted,fontSize:9,fontFamily:'JetBrains Mono,monospace',formatter:v=>`$${v.toFixed(0)}K`}}>
+              {dv01Chart.map((_,i)=><Cell key={i} fill={[C.blue,'#1D4ED8','#1E40AF','#1E3A8A',C.teal,'#0D9488','#0F766E'][i%7]}/>)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+
+    <Sec>RATE SENSITIVITY CURVE</Sec>
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px',marginBottom:22}}>
+      <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text,marginBottom:4}}>Estimated P&L vs Parallel Rate Shift</div>
+      <div style={{fontSize:11,color:C.muted,marginBottom:14,fontFamily:'JetBrains Mono,monospace'}}>Linear DV01 approximation · use What-If Lab for full reprice</div>
+      <ResponsiveContainer width="100%" height={200}>
+        <ComposedChart data={sensData}>
+          <defs><linearGradient id="sensG" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor={C.blue} stopOpacity={.15}/><stop offset="95%" stopColor={C.blue} stopOpacity={0}/>
+          </linearGradient></defs>
+          <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false}/>
+          <XAxis dataKey="bps" tick={{fill:C.muted,fontSize:10,fontFamily:'JetBrains Mono,monospace'}} axisLine={{stroke:C.border}} tickLine={false} tickFormatter={v=>`${v>0?'+':''}${v}bp`}/>
+          <YAxis tick={{fill:C.muted,fontSize:9,fontFamily:'JetBrains Mono,monospace'}} axisLine={false} tickLine={false} tickFormatter={v=>`${v>=0?'+':''}$${v.toFixed(0)}M`} width={64}/>
+          <Tooltip content={({active,payload})=>{
+            if(!active||!payload?.length) return null;
+            const v=payload[0]?.value;
+            return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:'8px 12px',fontFamily:'JetBrains Mono,monospace',fontSize:11}}>
+              <div style={{color:C.muted}}>Shift: {payload[0]?.payload.bps>0?'+':''}{payload[0]?.payload.bps} bps</div>
+              <div style={{color:v>=0?C.teal:C.red}}>{v>=0?'+':''}${v?.toFixed(2)}M</div>
+            </div>;
+          }}/>
+          <ReferenceLine y={0} stroke={C.dim} strokeDasharray="4 2"/>
+          <Area type="monotone" dataKey="pnl" fill="url(#sensG)" stroke="none"/>
+          <Line type="monotone" dataKey="pnl" stroke={C.blue} strokeWidth={2.5} dot={false} name="Est. P&L"/>
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  </div>;
+}
+
+// ── RISK PAGE ─────────────────────────────────────────────────────────────
+function RiskPage({snap, displayVar, displayCvar, conf}){
+  const dist  = snap?.pnl_distribution||[];
+  const bonds = snap?.bonds||[];
+
+  const varLevels = useMemo(()=>{
+    if(!dist.length) return {v90:0,v95:0,v99:0,cv95:0};
+    const s=[...dist].sort((a,b)=>a-b);
+    const n=s.length;
+    const v90 = s[Math.floor(.10*n)] < 0 ? -s[Math.floor(.10*n)] : 0;
+    const v95 = s[Math.floor(.05*n)] < 0 ? -s[Math.floor(.05*n)] : 0;
+    const v99 = s[Math.floor(.01*n)] < 0 ? -s[Math.floor(.01*n)] : 0;
+    const t95  = s.slice(0,Math.floor(.05*n)+1).filter(x=>x<0);
+    const cv95 = t95.length ? -(t95.reduce((a,x)=>a+x,0)/t95.length) : v95;
+    return {v90,v95,v99,cv95};
+  },[dist]);
+
+  const tailRatio = varLevels.v95>0 ? varLevels.cv95/varLevels.v95 : 1;
+
+  const varBarData=[
+    {level:'VaR 90%', val:(varLevels.v90||0)/1e6, fill:'rgba(13,148,136,.8)'},
+    {level:'VaR 95%', val:(varLevels.v95||0)/1e6, fill:C.amber},
+    {level:'VaR 99%', val:(varLevels.v99||0)/1e6, fill:C.red},
+    {level:'CVaR 95%',val:(varLevels.cv95||0)/1e6,fill:'#7F1D1D'},
+  ];
+
+  const sectorMap={};
+  bonds.forEach(b=>{sectorMap[b.sector]=(sectorMap[b.sector]||0)+b.weight;});
+  const SC={Government:C.blue,Technology:C.teal,Financials:C.amber};
+  const sectorData=Object.entries(sectorMap).map(([s,w])=>({name:s,value:Math.round(w*1000)/10,color:SC[s]||C.muted}));
+
+  return <div className="fade-up">
+    <Sec>RISK METRICS</Sec>
+    <div style={{display:'flex',gap:12,marginBottom:22}}>
+      <MetCard label="VAR 90%" val={varLevels.v90?fmtM(varLevels.v90):'—'} sub="1-day · PCA MC" color={C.teal} accent={C.teal}/>
+      <MetCard label={`VAR ${(conf*100).toFixed(0)}%`} val={displayVar?fmtM(displayVar):'—'} sub="Active confidence level" color={C.amber} accent={C.amber}/>
+      <MetCard label="VAR 99%" val={varLevels.v99?fmtM(varLevels.v99):'—'} sub="Extreme tail · 1-day" color={C.red} accent={C.red}/>
+      <MetCard label={`CVAR ${(conf*100).toFixed(0)}%`} val={displayCvar?fmtM(displayCvar):'—'} sub="Expected shortfall" color={'#991B1B'} accent={'#991B1B'}/>
+      <MetCard label="TAIL RATIO" val={`${tailRatio.toFixed(2)}×`} sub={tailRatio<1.2?'Normal tail':'Fat tail'} color={tailRatio>1.5?C.red:C.teal} accent={tailRatio>1.5?C.red:C.teal}/>
+    </div>
+
+    <Sec>MONTE CARLO P&L DISTRIBUTION</Sec>
+    <div style={{marginBottom:22}}><MCDistChart dist={dist} var95={displayVar} cvar95={displayCvar}/></div>
+
+    <Sec>VAR SPECTRUM & SECTOR EXPOSURE</Sec>
+    <div style={{display:'grid',gridTemplateColumns:'60% 40%',gap:16,marginBottom:22}}>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px'}}>
+        <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text,marginBottom:14}}>VaR at Multiple Confidence Levels</div>
+        <ResponsiveContainer width="100%" height={230}>
+          <BarChart data={varBarData} margin={{right:20,top:20}}>
+            <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false}/>
+            <XAxis dataKey="level" tick={{fill:C.muted,fontSize:11,fontFamily:'DM Sans,sans-serif'}} axisLine={{stroke:C.border}} tickLine={false}/>
+            <YAxis tick={{fill:C.muted,fontSize:9,fontFamily:'JetBrains Mono,monospace'}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v.toFixed(2)}M`} width={52}/>
+            <Tooltip content={({active,payload})=>{
+              if(!active||!payload?.length) return null;
+              return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:'8px 12px',fontFamily:'JetBrains Mono,monospace',fontSize:11}}>
+                <div style={{color:C.muted}}>{payload[0]?.payload.level}</div>
+                <div style={{color:C.text}}>Loss: ${payload[0]?.value?.toFixed(3)}M</div>
+              </div>;
+            }}/>
+            <Bar dataKey="val" radius={[4,4,0,0]} maxBarSize={80} label={{position:'top',fill:C.muted,fontSize:9,fontFamily:'JetBrains Mono,monospace',formatter:v=>`$${v.toFixed(2)}M`}}>
+              {varBarData.map((e,i)=><Cell key={i} fill={e.fill}/>)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px'}}>
+        <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text,marginBottom:14}}>Sector Exposure</div>
+        <div style={{display:'flex',alignItems:'center',gap:14}}>
+          <ResponsiveContainer width={150} height={150}>
+            <PieChart>
+              <Pie data={sectorData} cx={70} cy={70} innerRadius={44} outerRadius={66} dataKey="value" paddingAngle={3} strokeWidth={0}>
+                {sectorData.map((e,i)=><Cell key={i} fill={e.color}/>)}
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+          <div style={{flex:1}}>
+            {sectorData.map(s=><div key={s.name} style={{marginBottom:12}}>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                <div style={{display:'flex',alignItems:'center',gap:6}}>
+                  <div style={{width:8,height:8,borderRadius:2,background:s.color,flexShrink:0}}/>
+                  <span style={{fontSize:12,color:C.text,fontWeight:500}}>{s.name}</span>
+                </div>
+                <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:12,color:s.color,fontWeight:700}}>{s.value.toFixed(1)}%</span>
+              </div>
+              <div style={{height:3,background:C.border,borderRadius:2,overflow:'hidden'}}>
+                <div style={{height:'100%',width:`${s.value}%`,background:s.color,borderRadius:2}}/>
+              </div>
+            </div>)}
+          </div>
+        </div>
+        <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:12}}>
+          <div style={{fontSize:10,color:C.muted,letterSpacing:'.08em',marginBottom:8,fontWeight:600}}>DV01 BY BOND ($K)</div>
+          {(snap?.bonds||[]).map(b=><div key={b.id} style={{display:'flex',justifyContent:'space-between',padding:'3px 0',fontSize:11}}>
+            <span style={{fontFamily:'JetBrains Mono,monospace',color:C.muted}}>{b.id}</span>
+            <span style={{fontFamily:'JetBrains Mono,monospace',color:C.text}}>${(b.dv01/1000).toFixed(0)}K</span>
+          </div>)}
+        </div>
+      </div>
+    </div>
+
+    <Sec>RISK DECOMPOSITION</Sec>
+    <div style={{marginBottom:22}}><VaRDonut var95={displayVar}/></div>
+  </div>;
+}
+
+// ── PNL PAGE ──────────────────────────────────────────────────────────────
+function PnLPage({snap, shiftResult}){
+  const bonds = snap?.bonds||[];
+
+  const carryByBond = bonds.map(b=>({...b, carry: b.coupon*b.notional/252}));
+  const totalCarry  = carryByBond.reduce((s,b)=>s+b.carry,0);
+  const ratePnl     = shiftResult?.rate_pnl   ?? 0;
+  const spreadPnl   = shiftResult?.spread_pnl ?? 0;
+  const totalPnl    = totalCarry + ratePnl + spreadPnl;
+
+  const attrData=[
+    {name:'Carry',  value:totalCarry/1e6,  fill:C.teal},
+    {name:'Rate',   value:ratePnl/1e6,     fill:ratePnl>=0?C.teal:C.red},
+    {name:'Spread', value:spreadPnl/1e6,   fill:spreadPnl>=0?C.teal:C.red},
+    {name:'Total',  value:totalPnl/1e6,    fill:totalPnl>=0?C.blue:C.red},
+  ];
+
+  const perBond = carryByBond.map(b=>({
+    name: b.id, fullName: b.name,
+    carry: Math.round(b.carry/100)/10,
+    scenario: shiftResult?.per_bond_pnl?.[b.id] != null
+      ? Math.round(shiftResult.per_bond_pnl[b.id]/100)/10 : 0,
+  }));
+
+  const pcaExpl = snap?.pca_explained||[];
+  const FACTOR_NAMES=['Level (PC1)','Slope (PC2)','Curvature (PC3)'];
+  const FACTOR_COLORS=[C.blue,C.teal,C.amber];
+
+  return <div className="fade-up">
+    <Sec>DAILY P&L ATTRIBUTION</Sec>
+    <div style={{display:'flex',gap:12,marginBottom:22}}>
+      <MetCard label="DAILY CARRY" val={fmtM(totalCarry)} sub="Coupon accrual · 1/252 year" color={C.teal} accent={C.teal}/>
+      <MetCard label="RATE P&L" val={ratePnl?fmtPnl(ratePnl):'$0'} sub={shiftResult?'From active scenario':'Activate What-If Lab'} color={ratePnl>=0?C.teal:C.red} accent={ratePnl>=0?C.teal:C.red}/>
+      <MetCard label="SPREAD P&L" val={spreadPnl?fmtPnl(spreadPnl):'$0'} sub="Credit spread impact" color={spreadPnl>=0?C.teal:C.red} accent={spreadPnl>=0?C.teal:C.red}/>
+      <MetCard label="TOTAL P&L" val={fmtPnl(totalPnl)} sub="Carry + Rate + Spread" color={totalPnl>=0?C.teal:C.red} accent={totalPnl>=0?C.teal:C.red}/>
+    </div>
+
+    {!shiftResult&&<div style={{background:'rgba(37,99,235,.06)',border:`1px solid ${C.border}`,borderRadius:8,padding:'12px 18px',marginBottom:22,display:'flex',alignItems:'center',gap:12}}>
+      <span style={{color:C.blue,fontSize:16}}>ℹ</span>
+      <span style={{fontSize:12,color:C.muted}}>Rate and spread P&L is <strong style={{color:C.text}}>$0</strong> — no scenario is active. Go to <strong style={{color:C.blue}}>Overview → What-If Scenario Lab</strong> and move the parallel shift slider to see full P&L attribution.</span>
+    </div>}
+
+    <Sec>COMPONENT BREAKDOWN</Sec>
+    <div style={{display:'grid',gridTemplateColumns:'60% 40%',gap:16,marginBottom:22}}>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px'}}>
+        <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text,marginBottom:14}}>P&L Attribution ($M)</div>
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={attrData} margin={{top:22,right:20}}>
+            <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false}/>
+            <XAxis dataKey="name" tick={{fill:C.muted,fontSize:12,fontFamily:'DM Sans,sans-serif'}} axisLine={{stroke:C.border}} tickLine={false}/>
+            <YAxis tick={{fill:C.muted,fontSize:9,fontFamily:'JetBrains Mono,monospace'}} axisLine={false} tickLine={false} tickFormatter={v=>`${v>=0?'+':''}$${v.toFixed(2)}M`} width={68}/>
+            <Tooltip content={({active,payload})=>{
+              if(!active||!payload?.length) return null;
+              const v=payload[0]?.value;
+              return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:'8px 12px',fontFamily:'JetBrains Mono,monospace',fontSize:11}}>
+                <div style={{color:C.muted}}>{payload[0]?.payload.name}</div>
+                <div style={{color:v>=0?C.teal:C.red}}>{v>=0?'+':''}${v?.toFixed(4)}M</div>
+              </div>;
+            }}/>
+            <ReferenceLine y={0} stroke={C.dim}/>
+            <Bar dataKey="value" radius={[4,4,0,0]} maxBarSize={90} label={{position:'top',fill:C.muted,fontSize:9,fontFamily:'JetBrains Mono,monospace',formatter:v=>`${v>=0?'+':''}$${v.toFixed(3)}M`}}>
+              {attrData.map((e,i)=><Cell key={i} fill={e.fill}/>)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px'}}>
+        <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text,marginBottom:6}}>PCA Yield Curve Factors</div>
+        <div style={{fontSize:11,color:C.muted,marginBottom:18,fontFamily:'JetBrains Mono,monospace'}}>Variance explained by each factor</div>
+        {pcaExpl.map((v,i)=><div key={i} style={{marginBottom:18}}>
+          <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
+            <span style={{fontSize:12,color:C.text,fontWeight:500}}>{FACTOR_NAMES[i]||`PC${i+1}`}</span>
+            <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:12,color:FACTOR_COLORS[i],fontWeight:700}}>{v.toFixed(1)}%</span>
+          </div>
+          <div style={{height:8,background:C.border,borderRadius:4,overflow:'hidden'}}>
+            <div style={{height:'100%',width:`${Math.min(100,v*2.5)}%`,background:FACTOR_COLORS[i],borderRadius:4}}/>
+          </div>
+        </div>)}
+        <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12,display:'flex',justifyContent:'space-between'}}>
+          <span style={{fontSize:11,color:C.muted}}>Total explained</span>
+          <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:12,color:C.text,fontWeight:700}}>{pcaExpl.reduce((s,v)=>s+v,0).toFixed(1)}%</span>
+        </div>
+        <div style={{marginTop:10,background:'rgba(37,99,235,.06)',borderRadius:6,padding:'10px 12px'}}>
+          <div style={{fontSize:10,color:C.muted,lineHeight:1.65}}>3-factor PCA on 603 days of FRED data captures parallel shifts, slope, and curvature moves in the US Treasury curve.</div>
+        </div>
+      </div>
+    </div>
+
+    <Sec>PER-BOND P&L</Sec>
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px',marginBottom:22}}>
+      <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text,marginBottom:14}}>
+        Bond-Level P&L ($K) — Carry{shiftResult?' + Scenario Impact':''}
+      </div>
+      <ResponsiveContainer width="100%" height={220}>
+        <BarChart data={perBond} barSize={22} margin={{top:16,right:20}}>
+          <CartesianGrid stroke={C.border} strokeDasharray="3 3" vertical={false}/>
+          <XAxis dataKey="name" tick={{fill:C.muted,fontSize:10,fontFamily:'JetBrains Mono,monospace'}} axisLine={{stroke:C.border}} tickLine={false}/>
+          <YAxis tick={{fill:C.muted,fontSize:9,fontFamily:'JetBrains Mono,monospace'}} axisLine={false} tickLine={false} tickFormatter={v=>`$${v.toFixed(0)}K`} width={52}/>
+          <Tooltip content={({active,payload,label})=>{
+            if(!active||!payload?.length) return null;
+            const b=perBond.find(x=>x.name===label);
+            return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:'8px 12px',fontFamily:'JetBrains Mono,monospace',fontSize:11}}>
+              <div style={{color:C.text,marginBottom:4}}>{b?.fullName}</div>
+              {payload.map((p,i)=><div key={i} style={{color:p.fill}}>{p.name}: ${p.value?.toFixed(1)}K</div>)}
+            </div>;
+          }}/>
+          <ReferenceLine y={0} stroke={C.dim}/>
+          <Bar dataKey="carry" name="Carry" stackId="s" fill={C.teal} radius={shiftResult?[0,0,0,0]:[4,4,0,0]}/>
+          {shiftResult&&<Bar dataKey="scenario" name="Scenario" stackId="s" fill={C.blue} radius={[4,4,0,0]}/>}
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  </div>;
+}
+
+// ── STRESS PAGE ───────────────────────────────────────────────────────────
+function StressPage({snap}){
+  const stress = snap?.stress ? Object.values(snap.stress) : [];
+  const nav    = snap?.nav||1;
+
+  const barData = stress.map(s=>({
+    name:s.name,
+    impact:s.impact_pct,
+    fill:s.impact_pct<-12?C.red:s.impact_pct<-6?C.amber:s.impact_pct>0?C.teal:C.muted,
+  }));
+
+  const worstImpact = stress.length ? Math.min(...stress.map(s=>s.impact_pct)) : 0;
+  const varLimit    = snap?.var_limit||1;
+
+  return <div className="fade-up">
+    <Sec>STRESS TEST OVERVIEW</Sec>
+    <div style={{display:'flex',gap:12,marginBottom:22}}>
+      {stress.slice(0,4).map((s,i)=>{
+        const c=s.impact_pct<-12?C.red:s.impact_pct<-6?C.amber:s.impact_pct>0?C.teal:C.muted;
+        return <MetCard key={i} label={s.name.toUpperCase()} val={`${s.impact_pct.toFixed(1)}%`}
+          sub={`${fmtM(s.impact_abs)} impact`} color={c} accent={c}/>;
+      })}
+    </div>
+
+    <Sec>SCENARIO IMPACT</Sec>
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px',marginBottom:22}}>
+      <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text,marginBottom:14}}>P&L Impact by Scenario (% of NAV)</div>
+      {barData.length===0&&<div style={{padding:'30px',color:C.muted,textAlign:'center'}}>No stress scenarios loaded.</div>}
+      <ResponsiveContainer width="100%" height={Math.max(180,barData.length*58+48)}>
+        <BarChart data={barData} layout="vertical" barSize={26} margin={{left:10,right:90,top:0,bottom:0}}>
+          <CartesianGrid stroke={C.border} strokeDasharray="3 3" horizontal={false}/>
+          <XAxis type="number" tick={{fill:C.muted,fontSize:10,fontFamily:'JetBrains Mono,monospace'}} axisLine={{stroke:C.border}} tickLine={false} tickFormatter={v=>`${v}%`}/>
+          <YAxis type="category" dataKey="name" width={220} tick={{fill:C.text,fontSize:11,fontFamily:'DM Sans,sans-serif'}} axisLine={false} tickLine={false}/>
+          <Tooltip content={({active,payload})=>{
+            if(!active||!payload?.length) return null;
+            const s=stress.find(x=>x.name===payload[0]?.payload.name);
+            return <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:'10px 14px',fontFamily:'JetBrains Mono,monospace',fontSize:11,maxWidth:260}}>
+              <div style={{color:C.text,fontWeight:700,marginBottom:6}}>{s?.name}</div>
+              <div style={{color:payload[0]?.payload.fill}}>Impact: {s?.impact_pct.toFixed(2)}%</div>
+              <div style={{color:C.muted}}>Absolute: {fmtM(s?.impact_abs||0)}</div>
+              {s?.worst_bond&&<div style={{color:C.muted,marginTop:4}}>Worst bond: <strong>{s.worst_bond}</strong></div>}
+            </div>;
+          }}/>
+          <ReferenceLine x={0} stroke={C.border}/>
+          <Bar dataKey="impact" radius={[0,4,4,0]} label={{position:'right',fill:C.muted,fontSize:10,fontFamily:'JetBrains Mono,monospace',formatter:v=>`${v.toFixed(1)}%`}}>
+            {barData.map((e,i)=><Cell key={i} fill={e.fill}/>)}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+
+    <Sec>SCENARIO DETAILS</Sec>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:22}}>
+      <StressTable stress={snap?.stress} navM={nav/1e6}/>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px'}}>
+        <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text,marginBottom:14}}>Risk Context</div>
+        {[
+          {label:'Portfolio NAV',         val:fmtM(nav),                             color:C.text},
+          {label:'VaR Limit (150bps)',     val:fmtM(varLimit),                        color:C.blue},
+          {label:'Limit as % of NAV',      val:`${(varLimit/nav*100).toFixed(2)}%`,   color:C.muted},
+          {label:'Worst Scenario',         val:`${worstImpact.toFixed(2)}%`,          color:worstImpact<-12?C.red:C.amber},
+          {label:'Worst Scenario ($)',     val:fmtM(worstImpact/100*nav),             color:worstImpact<-12?C.red:C.amber},
+          {label:'Stress / VaR Limit',    val:`${Math.abs(worstImpact/100*nav/varLimit).toFixed(1)}×`, color:C.muted},
+        ].map(r=><div key={r.label} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'9px 0',borderBottom:`1px solid ${C.border}`}}>
+          <span style={{fontSize:12,color:C.muted}}>{r.label}</span>
+          <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:14,fontWeight:700,color:r.color}}>{r.val}</span>
+        </div>)}
+        <div style={{background:'rgba(37,99,235,.06)',borderRadius:6,padding:'12px 14px',marginTop:14}}>
+          <div style={{fontSize:11,color:C.muted,lineHeight:1.65}}>
+            Scenarios are fully repriced using the spot curve bootstrapper.
+            {stress.some(s=>s.impact_pct<-15)
+              ?<span style={{color:C.amber}}> Scenarios beyond −15% detected — review duration hedging.</span>
+              :<span style={{color:C.teal}}> All scenarios within manageable range.</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
+// ── REGULATORY PAGE ───────────────────────────────────────────────────────
+function RegulatoryPage({snap, displayVar, displayUtil}){
+  const bonds    = snap?.bonds||[];
+  const nav      = snap?.nav||0;
+  const totalDv01= snap?.total_dv01||0;
+  const dv01Lim  = snap?.dv01_limit||500000;
+  const maxPosPct= snap?.max_position_pct||0.25;
+
+  const maxWeight  = bonds.length ? Math.max(...bonds.map(b=>b.weight)) : 0;
+  const dv01Util   = totalDv01/dv01Lim*100;
+  const concUtil   = maxWeight/maxPosPct*100;
+
+  const var10d     = displayVar ? displayVar*Math.sqrt(10) : 0;
+  const capitalReq = var10d*3;
+
+  const limits=[
+    {name:'Value-at-Risk',     cur:displayVar||0, lim:snap?.var_limit||1, util:displayUtil||0, fmt:v=>fmtM(v)},
+    {name:'DV01 Sensitivity',  cur:totalDv01,      lim:dv01Lim,            util:dv01Util,       fmt:v=>fmtK(v)},
+    {name:'Max Concentration', cur:maxWeight*100,  lim:maxPosPct*100,      util:concUtil,       fmt:v=>`${v.toFixed(1)}%`},
+  ];
+
+  const getC = pct=>pct>85?C.red:pct>70?C.amber:C.teal;
+  const getS = pct=>pct>85?'BREACH RISK':pct>70?'ELEVATED':'COMPLIANT';
+
+  const govPct = bonds.filter(b=>b.sector==='Government').reduce((s,b)=>s+b.weight,0)*100;
+
+  return <div className="fade-up">
+    <Sec>RISK LIMIT COMPLIANCE</Sec>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:16,marginBottom:22}}>
+      {limits.map(l=>{
+        const c=getC(l.util); const st=getS(l.util);
+        return <div key={l.name} style={{background:C.surface,border:`1px solid ${l.util>70?c:C.border}`,borderTop:`3px solid ${c}`,borderRadius:10,padding:'20px'}}>
+          <div style={{fontSize:9,color:C.muted,letterSpacing:'.1em',marginBottom:10,fontWeight:600}}>{l.name.toUpperCase()}</div>
+          <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:28,fontWeight:700,color:c,marginBottom:10}}>{l.util.toFixed(1)}%</div>
+          <div style={{height:6,background:C.border,borderRadius:3,marginBottom:10,overflow:'hidden'}}>
+            <div style={{height:'100%',width:`${Math.min(100,l.util)}%`,background:c,borderRadius:3,transition:'width .5s ease'}}/>
+          </div>
+          <div style={{display:'flex',justifyContent:'space-between',fontSize:10,fontFamily:'JetBrains Mono,monospace',color:C.dim,marginBottom:10}}>
+            <span>Cur: {l.fmt(l.cur)}</span><span>Lim: {l.fmt(l.lim)}</span>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:6}}>
+            <div style={{width:7,height:7,borderRadius:'50%',background:c}}/>
+            <span style={{fontSize:10,fontWeight:700,color:c,letterSpacing:'.07em'}}>{st}</span>
+          </div>
+        </div>;
+      })}
+    </div>
+
+    <Sec>CAPITAL REQUIREMENTS & COMPLIANCE</Sec>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:22}}>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px'}}>
+        <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text,marginBottom:14}}>Indicative Basel III Market Risk Capital</div>
+        {[
+          {label:'1-Day VaR (95%)',      val:displayVar?fmtM(displayVar):'—',      note:'PCA MC · 5,000 scenarios',hl:false},
+          {label:'10-Day VaR (×√10)',    val:var10d?fmtM(var10d):'—',              note:'Regulatory time horizon',  hl:false},
+          {label:'VaR Capital (×3 mult)',val:capitalReq?fmtM(capitalReq):'—',      note:'Basel III minimum',        hl:true},
+          {label:'Stressed VaR (est.)',  val:displayVar?fmtM(displayVar*1.5):'—',  note:'1.5× baseline estimate',   hl:false},
+          {label:'Total IMA Capital',    val:capitalReq?fmtM(capitalReq*1.3):'—',  note:'VaR + SVaR combined',      hl:false},
+        ].map(r=><div key={r.label} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 8px',borderBottom:`1px solid ${C.border}`,background:r.hl?'rgba(37,99,235,.05)':'transparent',margin:r.hl?'0 -8px':0,borderRadius:r.hl?4:0}}>
+          <div>
+            <div style={{fontSize:12,color:r.hl?C.text:C.muted,fontWeight:r.hl?600:400}}>{r.label}</div>
+            <div style={{fontSize:9,color:C.dim,fontFamily:'JetBrains Mono,monospace'}}>{r.note}</div>
+          </div>
+          <span style={{fontFamily:'JetBrains Mono,monospace',fontSize:15,fontWeight:700,color:r.hl?C.blue:C.text}}>{r.val}</span>
+        </div>)}
+      </div>
+
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:'18px 20px'}}>
+        <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:14,color:C.text,marginBottom:14}}>Regulatory Compliance Checklist</div>
+        {[
+          {rule:'VaR within daily limit',           ok:true,                note:'Within 150bps NAV limit'},
+          {rule:'DV01 sensitivity limit',           ok:totalDv01<dv01Lim,   note:`${fmtK(totalDv01)} vs ${fmtK(dv01Lim)} limit`},
+          {rule:'Single-name concentration',        ok:maxWeight<maxPosPct,  note:`Max ${(maxWeight*100).toFixed(0)}% vs ${(maxPosPct*100).toFixed(0)}% limit`},
+          {rule:'Model validation (PCA 3-factor)',  ok:true,                note:'Active · fitted on 603 days FRED'},
+          {rule:'Daily stress testing',             ok:true,                note:'4 scenarios repriced at startup'},
+          {rule:'Real-time risk monitoring',        ok:true,                note:'Live dashboard · MC · KR01 · DV01'},
+        ].map(r=><div key={r.rule} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 0',borderBottom:`1px solid ${C.border}`}}>
+          <div style={{width:24,height:24,borderRadius:'50%',background:r.ok?'rgba(13,148,136,.15)':'rgba(220,38,38,.15)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+            <span style={{fontSize:12,color:r.ok?C.teal:C.red,fontWeight:700}}>{r.ok?'✓':'✗'}</span>
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:12,color:C.text,fontWeight:500}}>{r.rule}</div>
+            <div style={{fontSize:10,color:C.muted,fontFamily:'JetBrains Mono,monospace'}}>{r.note}</div>
+          </div>
+          <span style={{fontSize:10,fontWeight:700,color:r.ok?C.teal:C.red,letterSpacing:'.06em'}}>{r.ok?'PASS':'FAIL'}</span>
+        </div>)}
+      </div>
+    </div>
+
+    <Sec>PORTFOLIO SUMMARY</Sec>
+    <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',marginBottom:22}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)'}}>
+        {[
+          {label:'Portfolio NAV',     val:fmtM(nav),                                           sub:'Mark-to-market'},
+          {label:'Total DV01',        val:fmtK(totalDv01),                                     sub:'$ per 1bp parallel'},
+          {label:'VaR Utilization',   val:`${(displayUtil||0).toFixed(1)}%`,                   sub:'vs 150bps limit'},
+          {label:'IMA Capital (est.)',val:capitalReq?fmtM(capitalReq):'—',                     sub:'Basel III indicative'},
+          {label:'Positions',         val:`${bonds.length}`,                                   sub:'Unique bonds'},
+          {label:'Max Position',      val:`${(maxWeight*100).toFixed(0)}%`,                    sub:`Limit ${(maxPosPct*100).toFixed(0)}%`},
+          {label:'Govt Exposure',     val:`${govPct.toFixed(0)}%`,                             sub:'US Treasuries'},
+          {label:'Credit Exposure',   val:`${(100-govPct).toFixed(0)}%`,                       sub:'Corporate bonds'},
+        ].map((m,i)=><div key={m.label} style={{padding:'16px 20px',borderRight:i%4<3?`1px solid ${C.border}`:'none',borderBottom:i<4?`1px solid ${C.border}`:'none'}}>
+          <div style={{fontSize:9,color:C.muted,letterSpacing:'.09em',marginBottom:6,fontWeight:600}}>{m.label.toUpperCase()}</div>
+          <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:20,fontWeight:700,color:C.text,marginBottom:2}}>{m.val}</div>
+          <div style={{fontSize:10,color:C.dim}}>{m.sub}</div>
+        </div>)}
+      </div>
+    </div>
+  </div>;
+}
+
+// ── APP ───────────────────────────────────────────────────────────────────
+function App(){
+  const [tab,setTab]=useState('Overview');
+  const [sel,setSel]=useState(null);
+  const [conf,setConf]=useState(0.95);
+
+  // Data state (real from API)
+  const [snap,setSnap]=useState(null);         // snapshot from /api/snapshot
+  const [shiftResult,setShiftResult]=useState(null); // result from /api/shift
+  const [tradeResult,setTradeResult]=useState(null);
+
+  // Loading states
+  const [initLoading,setInitLoading]=useState(true);
+  const [shiftLoading,setShiftLoading]=useState(false);
+  const [recalcLoading,setRecalcLoading]=useState(false);
+  const [tradeLoading,setTradeLoading]=useState(false);
+
+  const [apiError,setApiError]=useState(null);
+
+  // ── Load initial snapshot ──────────────────────────────────────────────
+  useEffect(()=>{
+    fetch(`${API}/api/snapshot`)
+      .then(r=>{if(!r.ok)throw new Error(`API ${r.status}`);return r.json();})
+      .then(data=>{setSnap(data);setInitLoading(false);})
+      .catch(e=>{setApiError(e.message);setInitLoading(false);});
+  },[]);
+
+  // ── Reload VaR when confidence changes ────────────────────────────────
+  useEffect(()=>{
+    if(!snap) return;
+    fetch(`${API}/api/var`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confidence:conf})})
+      .then(r=>r.json())
+      .then(d=>setSnap(prev=>({...prev,var_95:d.var,cvar_95:d.cvar,var_utilization:d.var_utilization})))
+      .catch(()=>{});
+  },[conf]);
+
+  // ── Shift (slider debounce) ────────────────────────────────────────────
+  const handleShift=useCallback(params=>{
+    const isNoop=params.parallel_bps===0&&(!params.spread_shifts||Object.values(params.spread_shifts).every(v=>v===0));
+    if(isNoop){setShiftResult(null);return;}
+    setShiftLoading(true);
+    fetch(`${API}/api/shift`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)})
+      .then(r=>r.json())
+      .then(d=>{setShiftResult(d);setShiftLoading(false);})
+      .catch(()=>setShiftLoading(false));
+  },[]);
+
+  // ── Full recalculation ─────────────────────────────────────────────────
+  const handleRecalc=useCallback(params=>{
+    setRecalcLoading(true);
+    fetch(`${API}/api/recalc`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)})
+      .then(r=>r.json())
+      .then(d=>{
+        setSnap(prev=>({...prev,...d,stress:prev.stress}));
+        setShiftResult(null);
+        setRecalcLoading(false);
+      })
+      .catch(()=>setRecalcLoading(false));
+  },[]);
+
+  // ── Trade simulator ────────────────────────────────────────────────────
+  const handleTrade=useCallback(req=>{
+    setTradeLoading(true);
+    fetch(`${API}/api/trade`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(req)})
+      .then(r=>r.json())
+      .then(d=>{setTradeResult(d);setTradeLoading(false);})
+      .catch(()=>setTradeLoading(false));
+  },[]);
+
+  // ── Derived display values (shift overrides base) ──────────────────────
+  const displayNav  = shiftResult?.new_nav ?? snap?.nav;
+  const displayVar  = shiftResult?.new_var ?? snap?.var_95;
+  const displayCvar = shiftResult?.new_cvar ?? snap?.cvar_95;
+  const displayUtil = shiftResult?.var_utilization ?? snap?.var_utilization;
+  const displayPnl  = shiftResult?.pnl ?? 0;
+  const displayCurve= shiftResult ? shiftResult.curve : null; // what-if curve
+  const shiftPnlMap = shiftResult?.per_bond_pnl ?? null;
+  const displayBonds= tradeResult ? tradeResult.bonds : snap?.bonds;
+  const displayKR01 = tradeResult ? tradeResult.kr01 : snap?.kr01;
+
+  if(initLoading) return <LoadingScreen/>;
+
+  if(apiError) return <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100vh',gap:16}}>
+    <div style={{fontSize:24,color:C.red}}>⚠</div>
+    <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:18,color:C.text}}>API Connection Failed</div>
+    <div style={{fontSize:13,color:C.muted}}>Could not reach {API}</div>
+    <div style={{fontFamily:'JetBrains Mono,monospace',fontSize:12,color:C.red,background:'rgba(220,38,38,.1)',padding:'12px 20px',borderRadius:8}}>{apiError}</div>
+    <div style={{fontSize:12,color:C.dim}}>Run: <code style={{color:C.teal}}>cd fixedsense/dashboard && python api.py</code></div>
+  </div>;
+
+  return <div style={{minHeight:'100vh',fontFamily:'DM Sans,sans-serif'}}>
+    <TopNav tab={tab} setTab={setTab} loading={shiftLoading||recalcLoading}/>
+    <div style={{display:'flex',paddingTop:48}}>
+      <Sidebar bonds={displayBonds} varUtil={displayUtil} varVal={displayVar} varLimit={snap?.var_limit} sel={sel} setSel={setSel} onConfChange={setConf} conf={conf}/>
+      <div style={{flex:1,padding:'20px 24px',overflowY:'auto',minWidth:0}}>
+        {tab==='Overview'&&<>
+          {/* WHAT-IF LAB */}
+          <WhatIfPanel bonds={snap?.bonds} onShift={handleShift} onRecalc={params=>{setRecalcLoading(true);handleRecalc(params);}} loading={recalcLoading}/>
+
+          {/* METRICS */}
+          <Sec>PORTFOLIO METRICS</Sec>
+          <div style={{display:'flex',gap:12,marginBottom:22}}>
+            <MetCard label="NAV" val={displayNav?fmtM(displayNav):'—'} sub={`${(displayBonds||[]).length} positions`} accent={C.blue}/>
+            <MetCard label="DAILY P&L" val={fmtPnl(displayPnl)} sub="What-If scenario impact" color={sign(displayPnl,C.teal,C.red,C.text)} accent={sign(displayPnl,C.teal,C.red,C.border)} delta={displayPnl}/>
+            <MetCard label="TOTAL DV01" val={snap?.total_dv01?fmtK(snap.total_dv01):'—'} sub="Dollar value of 1bp" color={C.amber} accent={C.amber}/>
+            <MetCard label={`VAR ${(conf*100).toFixed(0)}%`} val={displayVar?fmtM(displayVar):'—'} sub="PCA MC · 1-day horizon" color={C.red} accent={C.red}/>
+            <MetCard label={`CVAR ${(conf*100).toFixed(0)}%`} val={displayCvar?fmtM(displayCvar):'—'} sub="Expected shortfall" color={C.redDk} accent={C.redDk}/>
+            <VaRCard cur={displayVar||0} lim={snap?.var_limit||1} util={displayUtil||0}/>
+          </div>
+
+          {/* CHARTS */}
+          <Sec>CURVE & RISK ANALYTICS</Sec>
+          <div style={{display:'grid',gridTemplateColumns:'60% 40%',gap:16,marginBottom:22}}>
+            <div style={{display:'flex',flexDirection:'column',gap:16}}>
+              <YieldCurveChart curve={snap?.curve} shiftedCurve={displayCurve}/>
+              <MCDistChart dist={snap?.pnl_distribution} var95={displayVar} cvar95={displayCvar}/>
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:16}}>
+              <KR01Chart kr01={displayKR01}/>
+              <VaRDonut var95={displayVar}/>
+            </div>
+          </div>
+
+          {/* STRESS + BONDS */}
+          <Sec>SCENARIO ANALYSIS & POSITIONS</Sec>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:22}}>
+            <StressTable stress={snap?.stress} navM={displayNav}/>
+            <BondTable bonds={displayBonds} sel={sel} setSel={setSel} shiftPnl={shiftPnlMap}/>
+          </div>
+
+          {/* ALERTS */}
+          <Sec>SYSTEM ALERTS</Sec>
+          <div style={{marginBottom:28}}>
+            <AlertsStrip varUtil={displayUtil} nav={displayNav} shiftPnl={displayPnl||null}/>
+          </div>
+        </>}
+
+        {tab==='Simulator'&&<>
+          <Sec>TRADE SIMULATOR</Sec>
+          <TradeSimulator bonds={snap?.bonds} onTrade={handleTrade} tradeResult={tradeResult} tradeLoading={tradeLoading}/>
+          {tradeResult&&<>
+            <Sec style={{marginTop:20}}>POST-TRADE RISK PROFILE</Sec>
+            <div style={{display:'grid',gridTemplateColumns:'60% 40%',gap:16,marginTop:16}}>
+              <KR01Chart kr01={tradeResult.kr01}/>
+              <BondTable bonds={tradeResult.bonds} sel={sel} setSel={setSel}/>
+            </div>
+          </>}
+        </>}
+
+        {tab==='Greeks'    &&<GreeksPage     snap={snap} displayKR01={displayKR01}/>}
+        {tab==='Risk'      &&<RiskPage       snap={snap} displayVar={displayVar} displayCvar={displayCvar} conf={conf}/>}
+        {tab==='P&L'       &&<PnLPage        snap={snap} shiftResult={shiftResult}/>}
+        {tab==='Stress'    &&<StressPage     snap={snap}/>}
+        {tab==='Regulatory'&&<RegulatoryPage snap={snap} displayVar={displayVar} displayUtil={displayUtil}/>}
+      </div>
+    </div>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

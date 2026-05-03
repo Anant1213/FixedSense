@@ -1,0 +1,66 @@
+benchmark:
+  name: "Equal-Weight US Treasury Benchmark"
+  currency: "USD"
+  total_notional: 500_000_000  # $500M USD (same as portfolio)
+  description: "Pure UST benchmark - 25% each in 2Y, 5Y, 10Y, 30Y tenors"
+
+  bonds:
+    - id: "BM_UST_2Y"
+      name: "Benchmark: US Treasury 2Y"
+      issuer: "US Treasury"
+      rating: "AAA"
+      coupon_rate: 0.0450  # 4.50% - same as portfolio UST_2Y
+      coupon_frequency: 2  # semi-annual
+      face_value: 100
+      maturity_date: "2028-04-30"
+      issue_date: "2026-04-30"
+      weight: 0.25  # 25% of benchmark
+      bond_type: "government"
+      sector: "Government"
+      credit_spread_bps: 0
+      maps_to_portfolio_tenor: 2.0
+
+    - id: "BM_UST_5Y"
+      name: "Benchmark: US Treasury 5Y"
+      issuer: "US Treasury"
+      rating: "AAA"
+      coupon_rate: 0.0425  # 4.25% - same as portfolio UST_5Y
+      coupon_frequency: 2  # semi-annual
+      face_value: 100
+      maturity_date: "2031-04-30"
+      issue_date: "2026-04-30"
+      weight: 0.25  # 25% of benchmark
+      bond_type: "government"
+      sector: "Government"
+      credit_spread_bps: 0
+      maps_to_portfolio_tenor: 5.0
+
+    - id: "BM_UST_10Y"
+      name: "Benchmark: US Treasury 10Y"
+      issuer: "US Treasury"
+      rating: "AAA"
+      coupon_rate: 0.0438  # 4.38% - same as portfolio UST_10Y
+      coupon_frequency: 2  # semi-annual
+      face_value: 100
+      maturity_date: "2036-04-30"
+      issue_date: "2026-04-30"
+      weight: 0.25  # 25% of benchmark
+      bond_type: "government"
+      sector: "Government"
+      credit_spread_bps: 0
+      maps_to_portfolio_tenor: 10.0
+
+    - id: "BM_UST_30Y"
+      name: "Benchmark: US Treasury 30Y"
+      issuer: "US Treasury"
+      rating: "AAA"
+      coupon_rate: 0.0463  # 4.63% - same as portfolio UST_30Y
+      coupon_frequency: 2  # semi-annual
+      face_value: 100
+      maturity_date: "2056-04-30"
+      issue_date: "2026-04-30"
+      weight: 0.25  # 25% of benchmark
+      bond_type: "government"
+      sector: "Government"
+      credit_spread_bps: 0
+      maps_to_portfolio_tenor: 30.0

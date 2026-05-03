@@ -1,0 +1,110 @@
+portfolio:
+  name: "US Fixed Income Portfolio"
+  currency: "USD"
+  total_notional: 500_000_000  # $500M USD
+
+  bonds:
+    # US Treasuries
+    - id: "UST_2Y"
+      name: "US Treasury 2Y"
+      issuer: "US Treasury"
+      rating: "AAA"
+      coupon_rate: 0.0450  # 4.50%
+      coupon_frequency: 2  # semi-annual
+      face_value: 100
+      maturity_date: "2028-04-30"
+      issue_date: "2026-04-30"
+      weight: 0.18  # 18% of portfolio
+      bond_type: "government"
+      sector: "Government"
+      credit_spread_bps: 0
+
+    - id: "UST_5Y"
+      name: "US Treasury 5Y"
+      issuer: "US Treasury"
+      rating: "AAA"
+      coupon_rate: 0.0425  # 4.25%
+      coupon_frequency: 2  # semi-annual
+      face_value: 100
+      maturity_date: "2031-04-30"
+      issue_date: "2026-04-30"
+      weight: 0.17  # 17% of portfolio
+      bond_type: "government"
+      sector: "Government"
+      credit_spread_bps: 0
+
+    - id: "UST_10Y"
+      name: "US Treasury 10Y"
+      issuer: "US Treasury"
+      rating: "AAA"
+      coupon_rate: 0.0438  # 4.38%
+      coupon_frequency: 2  # semi-annual
+      face_value: 100
+      maturity_date: "2036-04-30"
+      issue_date: "2026-04-30"
+      weight: 0.20  # 20% of portfolio
+      bond_type: "government"
+      sector: "Government"
+      credit_spread_bps: 0
+
+    - id: "UST_30Y"
+      name: "US Treasury 30Y"
+      issuer: "US Treasury"
+      rating: "AAA"
+      coupon_rate: 0.0463  # 4.63%
+      coupon_frequency: 2  # semi-annual
+      face_value: 100
+      maturity_date: "2056-04-30"
+      issue_date: "2026-04-30"
+      weight: 0.15  # 15% of portfolio
+      bond_type: "government"
+      sector: "Government"
+      credit_spread_bps: 0
+
+    # Corporate Bonds
+    - id: "AAPL_5Y"
+      name: "Apple 5Y AA+"
+      issuer: "Apple Inc."
+      rating: "AA+"
+      coupon_rate: 0.0475  # 4.75% (4.25% UST + 45bps spread + coupon adjustment)
+      coupon_frequency: 2  # semi-annual
+      face_value: 100
+      maturity_date: "2031-04-30"
+      issue_date: "2026-04-30"
+      weight: 0.15  # 15% of portfolio
+      bond_type: "corporate"
+      sector: "Technology"
+      credit_spread_bps: 45
+
+    - id: "JPM_7Y"
+      name: "JPMorgan 7Y A"
+      issuer: "JPMorgan Chase & Co."
+      rating: "A"
+      coupon_rate: 0.0515  # 5.15% (4.50% mid-curve + 65bps spread)
+      coupon_frequency: 2  # semi-annual
+      face_value: 100
+      maturity_date: "2033-04-30"
+      issue_date: "2026-04-30"
+      weight: 0.10  # 10% of portfolio
+      bond_type: "corporate"
+      sector: "Financials"
+      credit_spread_bps: 65
+
+    - id: "GS_10Y"
+      name: "Goldman Sachs 10Y A"
+      issuer: "The Goldman Sachs Group Inc."
+      rating: "A"
+      coupon_rate: 0.0518  # 5.18% (4.38% UST + 80bps spread)
+      coupon_frequency: 2  # semi-annual
+      face_value: 100
+      maturity_date: "2036-04-30"
+      issue_date: "2026-04-30"
+      weight: 0.05  # 5% of portfolio
+      bond_type: "corporate"
+      sector: "Financials"
+      credit_spread_bps: 80
+
+  # Risk limits
+  var_limit_bps: 150  # VaR limit in bps of portfolio
+  dv01_limit_dollars: 500000  # DV01 limit in USD dollars
+  max_single_position_pct: 0.25  # Maximum single position as % of portfolio
