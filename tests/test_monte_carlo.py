@@ -145,8 +145,10 @@ def test_scenario_count_effect():
     par_yields = {1.0: 0.03, 2.0: 0.035, 5.0: 0.04, 10.0: 0.045}
     spot_curve = bootstrap_spot_curve(par_yields)
 
-    # Fit PCA on minimal data
-    yields_matrix = np.array([[0.03, 0.035, 0.04, 0.045]] * 100)
+    # Fit PCA on data with realistic variance (constant matrix → zero eigenvalues → VaR=0)
+    np.random.seed(7)
+    base = np.array([0.03, 0.035, 0.04, 0.045])
+    yields_matrix = base + np.random.normal(0, 0.001, (100, 4))
     pca_minimal = fit_pca(yields_matrix, np.array([1.0, 2.0, 5.0, 10.0]), n_factors=2)
 
     bond_cf = generate_cashflow_schedule(

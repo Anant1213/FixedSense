@@ -110,27 +110,30 @@ class MarginalVaRCalculator:
             logger.warning("Portfolio P&L std is zero, cannot compute marginal VaR")
             component_var_dict = {cf.bond_id: 0.0 for cf in cashflows_list}
         else:
-            # z_alpha for the confidence level
+            # Euler decomposition: Component_VaR_i = Cov(PnL_i, PnL_portfolio) / Std(portfolio)
+            # This is the beta-scaled contribution; it sums to portfolio std (parametric VaR / z_alpha).
+            # Scale by (total_empirical_var / parametric_var) so components sum exactly to total_var.
             z_alpha = norm.ppf(confidence)
+            parametric_var = z_alpha * portfolio_std
 
-            component_var_dict = {}
+            raw_components = {}
             for i, cf in enumerate(cashflows_list):
-                # Covariance between bond i P&L and portfolio P&L
                 covariance = np.cov(per_bond_pnl[i, :], portfolio_pnl)[0, 1]
+                raw_components[cf.bond_id] = (covariance / portfolio_std) * z_alpha
 
-                # Component VaR = Cov / Std(portfolio) × z_α
-                component_var = (covariance / portfolio_std) * z_alpha
-                component_var_dict[cf.bond_id] = abs(component_var)
+            # Scale so Σ component_var = total_var (Euler property)
+            scale = total_var / parametric_var if parametric_var > 0 else 1.0
+            component_var_dict = {k: v * scale for k, v in raw_components.items()}
 
         # 6. Marginal VaR (component VaR per unit notional)
         marginal_var_dict = {}
         for i, cf in enumerate(cashflows_list):
             if notionals[i] != 0:
-                marginal_var_dict[cf.bond_id] = component_var_dict[cf.bond_id] / notionals[i]
+                marginal_var_dict[cf.bond_id] = abs(component_var_dict[cf.bond_id]) / notionals[i]
             else:
                 marginal_var_dict[cf.bond_id] = 0.0
 
-        # 7. VaR contribution %
+        # 7. VaR contribution % — signed so they sum to 1.0 (Euler property)
         var_contribution_pct_dict = {}
         if total_var != 0:
             for cf in cashflows_list:

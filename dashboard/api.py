@@ -102,8 +102,9 @@ def _bootstrap_and_cache():
     par_yields = {t: r / 100.0 for t, r in yc_df.iloc[-1].dropna().items()}
     curve = bootstrap_spot_curve(par_yields)
 
-    # Fit PCA on all available history
-    pca = fit_pca(yc_df.values, yc_df.columns.values, n_factors=3)
+    # Fit PCA — drop rows/cols with any NaN to avoid contaminating the covariance matrix
+    yc_clean = yc_df.dropna(axis=0, how="any").dropna(axis=1, how="any")
+    pca = fit_pca(yc_clean.values, yc_clean.columns.values.astype(float), n_factors=3)
 
     # Price portfolio
     prices = price_batch(cfs, curve, base_spreads)
@@ -164,7 +165,7 @@ def _bootstrap_and_cache():
     try:
         from stress.advanced_scenarios import AdvancedScenarioRunner
         adv_list = AdvancedScenarioRunner.run_all_advanced(
-            cfs, base_notionals.tolist(), curve, base_spreads.tolist()
+            cfs, base_notionals.tolist(), curve, base_spreads.tolist(), nav
         )
         for r in adv_list:
             stress[r.scenario_id] = {

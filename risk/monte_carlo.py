@@ -130,10 +130,10 @@ class MonteCarloEngine:
 
         logger.info(f"Portfolio P&L range: [{pnl_distribution.min():.2f}, {pnl_distribution.max():.2f}]")
 
-        # Recover factor scores for reporting
-        factor_scores = np.zeros((self.n_scenarios, self.pca_model.factor_loadings.shape[1]))
-        for i in range(self.n_scenarios):
-            factor_scores[i, :] = self.pca_model.project(curve_changes[i, :])
+        # Recover factor scores for reporting (vectorized)
+        # project: centered @ loadings  →  (n_scenarios, n_tenors) @ (n_tenors, n_factors)
+        centered = curve_changes - self.pca_model.mean_changes[np.newaxis, :]
+        factor_scores = centered @ self.pca_model.factor_loadings  # (n_scenarios, n_factors)
 
         result = MonteCarloResult(
             pnl_distribution=pnl_distribution,
