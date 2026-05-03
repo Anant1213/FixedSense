@@ -104,38 +104,6 @@ pytest tests/test_pnl_attribution.py -v  # Attribution identity
 - `main.py` — End-to-end execution showing all components
 - `dashboard/app.py` — 6-page Streamlit dashboard
 
-## Interview Demo (7 minutes)
-
-```python
-from fixedsense import *
-
-# 1. Bootstrap yield curve
-par_yields = {1: 0.03, 2: 0.035, 5: 0.04, 10: 0.045}
-spot_curve = bootstrap_spot_curve(par_yields)
-print(f"Spot curve: {spot_curve.spot_rates}")
-
-# 2. Create bonds and price them
-from pricing.cashflow_generator import generate_cashflow_schedule
-bond = generate_cashflow_schedule(...)
-price = BondPricer.price(bond, spot_curve)
-
-# 3. Compute Greeks
-kr01 = KR01Calculator.compute_kr01(bond, spot_curve, notional=1e7)
-print(f"KR01 profile: {kr01.kr01_by_tenor}")
-
-# 4. Run Monte Carlo
-pca_model = fit_pca(historical_yields, tenors)
-mc = MonteCarloEngine(pca_model, spot_curve, n_scenarios=10000)
-mc_result = mc.simulate([bond])
-
-# 5. Compute Risk
-var_95 = VaRCalculator.monte_carlo_var(mc_result, confidence=0.95)
-cvar_95 = CVaRCalculator.monte_carlo_cvar(mc_result, confidence=0.95)
-
-# 6. Stress test
-stress_result = ScenarioRunner.create_parallel_up_scenario(...)
-print(f"Impact of +200bps: {stress_result.impact_pct:.2f}%")
-
 # 7. P&L attribution
 attr = PnLAttribution.compute_daily_attribution(...)
 print(attr.summary())
