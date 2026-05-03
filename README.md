@@ -1,4 +1,4 @@
-# FixedSense: Production-Grade Fixed Income Risk System
+# FixedSense: Production-Grade  Risk System
 
 A comprehensive fixed income portfolio risk management system that mimics systems running on actual bank trading desks. FixedSense ingests bond market data, constructs yield curves, computes risk metrics (Greeks, VaR, CVaR), decomposes risk by factor and position, attributes daily P&L, runs stress tests, and surfaces everything through a real-time Streamlit dashboard.
 
@@ -184,9 +184,6 @@ docker build -t fixedsense .
 docker-compose up
 ```
 
-### With Apache Airflow (Optional Scheduler)
-
-A DAG template is provided to schedule nightly data ingestion and risk computation.
 
 ## Implementation Details
 
@@ -231,25 +228,7 @@ pytest tests/ -v
 # ...
 ```
 
-## Interview Talking Points
 
-**Mathematical Sophistication:**
-- Spot curve bootstrapping with guaranteed convergence
-- PCA decomposition of yield curve movements
-- Vectorized Monte Carlo simulation (10k scenarios in <2s)
-- FRTB-compliant risk metrics (not Basel 2.5 VaR)
-
-**Production Engineering:**
-- Pydantic config management with environment variable support
-- StorageBackend ABC pattern for local/S3 switching
-- Immutable dataclasses prevent mutation bugs
-- Comprehensive test coverage with numerical assertions
-
-**Business Understanding:**
-- KR01 (Key Rate DV01) shows WHERE rate risk lives
-- P&L attribution (carry/rate/spread/residual) is how PMs manage portfolios
-- Incremental VaR quantifies risk of new trades before execution
-- Historical stress replay answers: "What if 2008 happened today?"
 
 ## References
 
