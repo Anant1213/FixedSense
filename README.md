@@ -1,6 +1,6 @@
 # FixedSense: Production-Grade  Risk System
 
-A comprehensive fixed income portfolio risk management system that mimics systems running on actual bank trading desks. FixedSense ingests bond market data, constructs yield curves, computes risk metrics (Greeks, VaR, CVaR), decomposes risk by factor and position, attributes daily P&L, runs stress tests, and surfaces everything through a real-time Streamlit dashboard.
+A comprehensive  portfolio risk management system that mimics systems running on actual bank trading desks. FixedSense ingests bond market data, constructs yield curves, computes risk metrics (Greeks, VaR, CVaR), decomposes risk by factor and position, attributes daily P&L, runs stress tests, and surfaces everything through a real-time Streamlit dashboard.
 
 ## Key Features
 
@@ -139,18 +139,9 @@ ES_CONFIDENCE=0.975                 # 97.5% for FRTB
 PCA_LOOKBACK_DAYS=504               # ~2 years
 ```
 
-## Sample Portfolio
 
-The demo portfolio consists of 6 Indian bonds (Rs 100 Crore):
 
-| Bond | Type | Weight | Coupon | Maturity |
-|------|------|--------|--------|----------|
-| GOI 10Y | Sovereign | 25% | 7.25% | 2033 |
-| GOI 30Y | Sovereign | 20% | 7.54% | 2053 |
-| HDFC 5Y | Corporate AAA | 20% | 8.10% | 2028 (+55bps) |
-| RIL 7Y | Corporate AA+ | 15% | 8.35% | 2030 (+72bps) |
-| SBI 3Y | Corporate AAA | 10% | 7.75% | 2026 (+40bps) |
-| GOI 2Y | Sovereign | 10% | 6.80% | 2025 |
+
 
 ## Dashboard Pages
 
